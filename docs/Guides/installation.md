@@ -1,0 +1,645 @@
+---
+title: Installation and Runtime Modes
+description: Install and run the accelerator locally, from the CLI, in a dev container, or in Docker
+ms.date: 2026-11-25
+ms.topic: how-to
+---
+
+## Installation and Runtime Modes
+
+The **Microsoft Fabric ETL Migration Accelerator** runs as a loopback-bound
+FastAPI + Jinja2 + HTMX Python service, a standalone CLI, or a local Docker container. For
+portfolio assessment only, use the standalone offline HTML utility.
+
+## Offline ETL portfolio assessment
+
+1. Download [alteryx-portfolio.html](../../apps/portable/alteryx-portfolio.html)
+   and open the saved file in a current, organization-approved Edge or Chrome
+   browser with local JavaScript enabled. No installation, local server, or
+   Fabric sign-in is required.
+2. In **New Assessment**, choose **Alteryx** or **Informatica** for format
+   guidance, then choose **Select file(s)** or **Select folder**. Select
+   Alteryx `.yxmd`, `.yxmc`, or `.yxwz` files or PowerCenter repository
+   `.xml` exports. Folder selection includes supported files in subfolders.
+   For IDMC, select the
+   extracted export root containing `manifest.json` directly. The folder
+   must retain the asset subfolders and their `metadata.json` and graph
+   `asset.json` files. Choose **Assess portfolio** to assess the selected inputs.
+   Extract ZIP and `.yxzp` packages with an approved archive tool first.
+   The utility accepts up to 1,000 input files and 1,000 assessed assets, with
+   limits of 10 MiB per file read and 100 MiB per batch. Duplicate standalone
+   files are counted once.
+3. Review assessment scope and wave totals in **Portfolio**. Open
+   **Workflows** to compare complexity, suggested targets, and manual tool
+   types, or to filter the register by source or migration wave. **Export full portfolio
+   CSV** downloads every assessed row for Excel, even when the table is filtered.
+4. Open a workflow to review its **Summary**, **Source Workflow**, **Fabric
+   Design**, **Risk Assessment**, and **Validation** tabs. The Source Workflow
+   diagram shows active components and connections. The Fabric Design diagram adds
+   suggested mappings and flags tools for manual review. These are static
+   diagrams; the browser never executes a workflow.
+5. In **Migration Plan**, select a wave card to filter the backlog and
+   review the next steps. In **Technical Details**,
+   choose an evidence register, then filter by workflow or search its
+   contents. **Export current register** downloads all matching records.
+6. Use **Readiness** in **Workflows** to find assets that need a manual
+   mapping, dependency, expression, or design review. A pilot candidate
+   still needs validation. Offline target routing distinguishes compute from
+   orchestration and checks selected operation constraints. The original
+   inventory-based target and baseline wave remain available for comparison.
+7. To compare with the Python app, export `assessment.json` from a completed
+   Python assessment and import it under **Portfolio → Compare with Python
+   assessment** after assessing the same inputs offline. The HTML checks
+   source fingerprints, asset identity, registry and rules versions, and
+   graph metrics before using a matched Python target in recommendations,
+   filters, and exports. The Python wave is shown for comparison only.
+   Use the same extracted directory in both apps for IDMC; a report based
+   on the ZIP has a different fingerprint. Unmatched assets keep their
+   offline recommendations. **Export comparison CSV** preserves the original
+   inventory target, offline routed target, and imported target when available.
+   Effort estimates and delivery durations are not shown or exported
+   by the offline utility.
+
+The utility reads selected files in the browser without uploading them or
+saving assessment state. Treat the JSON and CSV reports as internal portfolio
+data: they can contain workflow file names and tool types. The utility counts
+file references and expression elements without including their raw values.
+Source evidence shows up to 200 tools and 200 connections per workflow;
+assessment totals use the full parsed graph. PowerCenter coverage includes
+workflows, linked session mappings, and standalone mappings. IDMC coverage
+includes mappings (`DTEMPLATE`), mapping tasks (`MTT`), and taskflows
+(`TASKFLOW`) in the supported manifest-based JSON format. Offline routing is
+an assessment heuristic, not compiler or runtime validation.
+Macro dependency resolution, artifact generation, live Fabric checks, and
+deployment are not supported in this mode.
+
+## Assessment in a Fabric notebook
+
+Use the [portfolio assessment notebook](../../notebooks/fabric-portfolio-assessment.ipynb)
+to run the Python assessment engine without a separate app. The notebook
+uses the same compiler-backed target routing as the analyst web app.
+
+1. Build the three decoupled library wheels (`etl-migration-core`, `etl-portfolio-assessment`, `etl-target-fabric`) on an approved build machine with
+   `python -m pip wheel --no-deps --wheel-dir dist ./packages/etl-migration-core ./packages/etl-portfolio-assessment ./packages/etl-target-fabric`. Add them and their approved dependencies (`defusedxml`, `pydantic`) to a Fabric
+   Environment using [Runtime 2.0](https://learn.microsoft.com/fabric/data-engineering/runtime-2-0).
+   Publish the environment. The notebook requires the PySpark runtime with
+   Python 3.12 or later, not the standalone Python notebook kernel.
+2. Import the `.ipynb` into Fabric, attach the published environment, and
+   attach an approved default Lakehouse. Stage approved exports under
+   Lakehouse **Files**. Select a file, an archive, or a directory by setting
+   `INPUT_PATH` relative to **Files**. For an extracted IDMC package, point
+   it to the directory containing `manifest.json` and `Explore`.
+3. Run **Preview the input** and review candidates and skips. Set
+   `CONFIRM_ASSESSMENT = True` in the configuration cell and rerun it before
+   running **Assess and review portfolio**. Set `PERSIST_DELTA_TABLES = True`
+   and run **Persist normalized assessment tables** to write the eight `etl_*`
+   Delta tables consumed by the Power BI report and Fabric analyst app.
+4. To save reports, set `WRITE_REPORTS = True`, rerun the configuration cell,
+   and run **Export reports**. Reports go to a new run folder under
+   `REPORT_FOLDER`. Keep the report folder outside the selected input.
+   The offline utility can import `assessment.json` when the file
+   fingerprints and assessment versions match.
+
+The notebook processes files inside Fabric, not on your workstation.
+Reports contain workflow names and fingerprints. The notebook does not
+export effort estimates, save generated Fabric definitions, or deploy items.
+
+## Power BI assessment report
+
+The [Power BI project](../../powerbi/ETL%20Migration%20Assessment.pbip) provides
+a five-page analyst report over normalized Lakehouse tables. It uses Direct
+Lake, retains assessment history, filters operational pages to the latest
+completed run, and includes an **Assessment Run History** page across retained
+runs.
+
+1. Set `PERSIST_DELTA_TABLES = True` in the notebook configuration. Run the
+   assessment and **Persist normalized assessment tables** cells to populate
+   the eight `etl_*` Delta tables (`etl_assessment_run`, `etl_workflow_assessment`,
+   `etl_tool_inventory`, `etl_finding`, `etl_dependency`, `etl_workflow_node`,
+   `etl_workflow_connection`, and `etl_capacity_profile`).
+2. Run `node scripts/generate-powerbi-report.mjs` to regenerate the approved
+   PBIR page definitions. Validate them with
+   `powerbi-report-author validate "powerbi\ETL Migration Assessment.Report"`.
+3. Build a deployment payload without storing tenant-scoped identifiers in
+   source control:
+
+   ```powershell
+   node scripts\build-powerbi-semantic-model-payload.mjs `
+     --workspace-id <workspace-guid> `
+     --lakehouse-id <lakehouse-guid> `
+     --out semantic-model-create.json
+   ```
+
+4. Deploy the generated payload to a development workspace through the Fabric
+   semantic model API. Bind or publish the PBIR report only after the Direct
+   Lake model and all report pages pass live rendering validation.
+
+## Fabric analyst app
+
+The [Fabric analyst app](../../apps/etl-migration-assessment-app/) provides an
+authenticated custom experience for intake, notebook execution, run status,
+portfolio analytics, workflow review, migration planning, and technical
+evidence. It uses Fabric Apps static hosting, a delegated semantic model
+connector, and server-side Functions.
+
+The analyst views include a leadership decision brief and readiness scorecard,
+searchable workflow register, workflow-level source, design, risk, validation,
+and CI/CD dispatch tabs (with one-click workflow preselection), migration wave
+gates and rationale, technical evidence registers, and an interactive
+capacity-planning page using persisted static workflow profiles (`model v3.1.0`)
+with fallback heuristics when older runs lack profile rows. Calibrate capacity
+estimates against measured pilot evidence before making a capacity or cost
+commitment.
+
+Fabric notebook assessment is static by default and persists
+`RoutingBasis = static_mapping`, the assessed OneLake input path, and deterministic
+remaining effort. **CI/CD dispatch** provides a separate **Confirm Fabric fit**
+action, which reruns the notebook with compiler routing and persists a new
+`compiler_confirmed` run. It does not generate repository artifacts. Generate
+and commit `generated-fabric-workflows` before dispatch.
+
+Before deploying, confirm that the Fabric Apps workload, Semantic Model Execute
+Queries API, and external OneLake access tenant settings are enabled. The app
+owner also needs access to the target Lakehouse and notebook.
+
+1. Configure the source-controlled connector placeholders through environment
+   variables:
+
+   ```powershell
+   Set-Location apps\etl-migration-assessment-app
+   $env:FABRIC_WORKSPACE_ID = '<workspace-guid>'
+   $env:FABRIC_SEMANTIC_MODEL_ID = '<semantic-model-guid>'
+   $env:VITE_REPORT_URL = '<published-report-url>'
+   ```
+
+2. Sign in, validate, and deploy:
+
+   ```powershell
+   npx rayfin login
+   npm run lint
+   npm test
+   npm run build:fabric
+   npm --prefix rayfin\functions run build
+   npx rayfin up --workspace <workspace-name> --dry-run
+   npx rayfin up --workspace <workspace-name>
+   ```
+
+3. Configure the deployed Function settings with `npx rayfin secret set` for
+   `FABRIC_WORKSPACE_ID`, `FABRIC_LAKEHOUSE_ID`, and `FABRIC_NOTEBOOK_ID`.
+   Enter each value at the masked prompt. Do not store these values in source
+   control.
+
+4. Configure the signed deployment preview:
+
+   ```powershell
+   npx rayfin secret set DEPLOYMENT_CONFIRMATION_KEY
+   ```
+
+   Use a randomly generated secret with at least 32 bytes of entropy. The app
+   signs each preview for ten minutes and requires an explicit confirmation
+   before dispatch.
+
+5. To enable GitHub Actions deployment, configure a token and a comma-separated
+   repository allow-list:
+
+   ```powershell
+   npx rayfin secret set GITHUB_TOKEN
+   npx rayfin secret set GITHUB_ALLOWED_REPOSITORIES
+   ```
+
+   Enter allow-list values as `owner/repository`. The token needs permission to
+   read repository metadata and dispatch
+   `.github/workflows/deploy-fabric-artifacts.yml`.
+
+6. To enable GitLab CI deployment, configure a token and a comma-separated
+   project allow-list:
+
+   ```powershell
+   npx rayfin secret set GITLAB_TOKEN
+   npx rayfin secret set GITLAB_ALLOWED_PROJECTS
+   ```
+
+   Enter allow-list values as `group/project`. For a self-managed GitLab
+   instance, also run `npx rayfin secret set GITLAB_BASE_URL` and enter its
+   HTTPS origin.
+
+> [!IMPORTANT]
+> Fabric deployment is dispatch-only. The app validates the provider, allow-list,
+> CI definition, ref, generated artifact paths, and selected targets. It then
+> displays a signed manifest for review. Only the confirmed manifest can dispatch
+> one existing CI workflow or pipeline per selected ready workflow. Provider
+> tokens remain in Fabric App secrets and are never returned to the browser.
+
+The intake flow accepts `.yxmd`, `.yxmc`, `.yxwz`, `.yxzp`, `.xml`, `.json`,
+and `.zip` files up to 3 MiB each. Files are staged under
+`Files/app-intake/<run-folder>` before the app starts the assessment notebook
+with persistence enabled. The app enforces one nonarchive source family per
+batch, caps a batch at 100 files and 100 MiB, skips duplicate content, shows the
+staged scope for confirmation, and can request cancellation of an active
+notebook job.
+
+Portfolio, workflow, migration, capacity, and technical pages provide
+formula-safe downloads. Capacity assumptions and per-workflow overrides are
+stored in the current browser by selected assessment run; they are not shared
+Fabric metadata.
+
+## One-step FEMA Fabric workspace deployment
+
+To provision or upgrade the entire Fabric stack in a single idempotent pass
+(creating or reusing a `FEMA` workspace folder and placing the Lakehouse,
+Runtime 2.0 Environment with the decoupled library wheels, Assessment Notebook,
+initialized `etl_*` Delta tables, Direct Lake Semantic Model, Power BI Report,
+and optionally the Fabric Analyst App inside it), use the unified workspace
+installer or the in-Fabric deployment notebook.
+
+### Focused notebook and analytics installer
+
+When the three library wheels are already built and the Fabric Analyst App is
+not required, use the focused installer. It creates or updates the Lakehouse,
+Runtime 2.0 Environment, assessment Notebook, eight Delta tables, Direct Lake
+Semantic Model, and Power BI Report. It never builds wheels or deploys Rayfin.
+
+Validate local wheels and definition payloads without changing Fabric:
+
+```powershell
+pwsh -NoProfile -File scripts\Deploy-FabricAssessmentStack.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -WheelDirectory .\dist `
+  -DryRun
+```
+
+Deploy using the current Azure CLI sign-in:
+
+```powershell
+az login
+pwsh -NoProfile -File scripts\Deploy-FabricAssessmentStack.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -WheelDirectory .\dist `
+  -UseAzCli
+```
+
+The workspace and focused installers open browser sign-in by default when
+`AZURE_CLIENT_ID` or `AZURE_TENANT_ID` is absent or blank. They no longer
+silently reuse a cached Azure CLI session; pass `-UseAzCli` to reuse it.
+Configured service-principal authentication remains unchanged.
+When both IDs are set, configure federation or a client secret; IDs alone are
+not sufficient for unattended authentication. Use `-UseBrowserLogin` to select
+user authentication instead.
+
+To request browser sign-in even when automation credentials are configured, use
+`-UseBrowserLogin`. The sign-in allows Fabric-only users without an Azure
+subscription. On Windows, the installer disables the Azure CLI account broker
+only during sign-in and restores the previous process setting afterward,
+without changing your saved Azure CLI configuration. Pass
+`-TenantId "<tenant-id>"` when the account belongs to more than one Microsoft
+Entra tenant; otherwise the script uses `AZURE_TENANT_ID` when it is set.
+
+```powershell
+pwsh -NoProfile -File scripts\Deploy-FabricAssessmentStack.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -WheelDirectory .\dist `
+  -UseBrowserLogin
+```
+
+The same `-UseBrowserLogin`, `-TenantId`, and `-UseAzCli` options are available
+on `Deploy-AcceleratorWorkspace.ps1`, `Deploy-FabricArtifacts.ps1`,
+`Invoke-FabricAlm.ps1`, and `New-FabricDeploymentPipeline.ps1`. Browser login
+occurs only when a script needs a live Fabric token, so offline dry runs do not
+open a sign-in window.
+Do not combine `-UseBrowserLogin` with `-UseAzCli`. These options authenticate
+Fabric API calls; they do not replace the separate Rayfin sign-in needed when
+deploying the Fabric Analyst App.
+
+The wheel directory must contain one compatible wheel for each package:
+
+* `etl_migration_core-*.whl`
+* `etl_portfolio_assessment-*.whl`
+* `etl_target_fabric-*.whl`
+
+### Standalone semantic model and report deployment
+
+Use the standalone semantic model script when the Lakehouse and its assessment
+tables already exist:
+
+For the complete generate, review, and manual deployment sequence, see
+[Manual Fabric Semantic Model and Report Deployment](manual-fabric-deployment.md).
+
+```powershell
+pwsh -NoProfile -File scripts\Deploy-FabricSemanticModel.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -LakehouseName "ETL_Migration_Assessment_Lakehouse" `
+  -UseAzCli `
+  -AllowOverwrite
+```
+
+The script resolves the Lakehouse, generates the Direct Lake TMDL payload,
+places the model in the configured workspace folder, and runs a framing
+refresh. Pass `-SkipRefresh` when the deployment must not trigger a refresh.
+
+Use the standalone report script after the target semantic model exists:
+
+```powershell
+pwsh -NoProfile -File scripts\Deploy-FabricPowerBIReport.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -SemanticModelName "ETL Migration Assessment Model" `
+  -UseAzCli `
+  -AllowOverwrite
+```
+
+The report payload is rebound to the resolved semantic model ID before upload.
+Omit `-AllowOverwrite` for first-time creation. If a same-named remote artifact
+already exists, each script stops unless overwrite authorization is explicit.
+Both scripts support `-WorkspaceId`, `-FolderName`, `-UseBrowserLogin`,
+`-TenantId`, `-OutputSummaryPath`, and `-DryRun`.
+
+Generate the code and payloads without deploying anything:
+
+```powershell
+pwsh -NoProfile -File scripts\Generate-FabricSemanticModelArtifacts.ps1 `
+  -WorkspaceId "<workspace-guid>" `
+  -LakehouseId "<lakehouse-guid>"
+```
+
+This creates the resolved `.SemanticModel` TMDL folder and
+`semantic-model-payload.json` under `dist\manual-deployment`. Review the TMDL,
+then deploy the semantic model and record its generated item ID.
+
+Generate the report only after the semantic model ID is available:
+
+```powershell
+pwsh -NoProfile -File scripts\Generate-FabricPowerBIReportArtifacts.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -SemanticModelId "<semantic-model-guid>"
+```
+
+This creates the regenerated `.Report` PBIR folder, the `.pbip` entry file, and
+`powerbi-report-payload.json` in the same output directory. The PBIP source
+uses a `byConnection` reference to the supplied semantic model ID. Direct Lake
+models must already exist in Fabric before Power BI Desktop opens the report.
+Pass `-Force` to replace a previous generated output.
+
+### Option A: PowerShell workspace installer (local workstation or CI)
+
+Validate all local payloads without mutating Fabric:
+
+```powershell
+pwsh -NoProfile -File scripts\Deploy-AcceleratorWorkspace.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -DryRun
+```
+
+Deploy or upgrade with explicit browser sign-in:
+
+```powershell
+pwsh -NoProfile -File scripts\Deploy-AcceleratorWorkspace.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -UseBrowserLogin
+```
+
+The installer stores built wheels in `dist/` and reuses the newest wheel for
+each required package on subsequent deployments. It builds only when the
+cached set is absent or incomplete, and it preserves unrelated wheels.
+Cache reuse does not detect package source changes. Pass `-RebuildWheels`
+after changing Python packages to refresh the stored wheels:
+
+```powershell
+pwsh -NoProfile -File scripts\Deploy-AcceleratorWorkspace.ps1 `
+  -WorkspaceName "<workspace-name>" `
+  -UseBrowserLogin `
+  -RebuildWheels
+```
+
+Use `-SkipWheelBuild` to prohibit automatic builds and require existing wheels,
+or `-WheelPath "<wheel-directory>"` to supply a prebuilt set.
+Neither option can be combined with `-RebuildWheels`. Dry runs never build wheels.
+
+Re-running the script updates the Environment libraries, Notebook, Semantic
+Model, Report, and Fabric App in place while preserving existing Lakehouse
+Delta tables and retained assessment runs. Pass `-FolderName "<path>"` to
+change the target folder (or `-FolderName ""` for workspace root),
+`-CreateWorkspace -CapacityId <guid>` to create a new capacity-backed workspace,
+or `-SkipFabricApp` to deploy only the Lakehouse, Spark, and Power BI items.
+
+> [!NOTE]
+> If a previously deployed Fabric App was soft-deleted, the installer uses the
+> matching Rayfin deployment record to restore its recoverable AppBackend and
+> child items before updating it. The workspace ID, item name, and recorded item
+> ID must all match. If the item was permanently deleted or its local deployment
+> record was removed, deploy with a new `-FabricAppName`.
+
+### Option B: In-Fabric deployment notebook (FEMA pattern)
+
+1. Build a self-contained deployment bundle on an approved workstation:
+
+   ```powershell
+   node scripts\build-fema-bundle.mjs --build-wheels --require-wheel
+   ```
+
+2. Upload `dist\fema-deployment-bundle\` into a Fabric Lakehouse under
+   `Files\fema-deployment-bundle\`.
+3. Import [Deploy_FEMA.ipynb](../../notebooks/Deploy_FEMA.ipynb)
+   into the target Fabric workspace, attach the Lakehouse, set
+   `CONFIRM_DEPLOY = True`, and run all cells.
+4. Use the printed `FABRIC_WORKSPACE_ID`, `FABRIC_LAKEHOUSE_ID`,
+   `FABRIC_NOTEBOOK_ID`, `FABRIC_SEMANTIC_MODEL_ID`, and `VITE_REPORT_URL` values
+   if you subsequently deploy the Fabric Analyst App with `npx rayfin up`.
+
+## Option 1: Local Workstation Setup (Recommended)
+
+### Run directly from built `.whl` files (production-like local runtime)
+
+Build all four workspace `.whl` distributions (`etl-migration-core`, `etl-portfolio-assessment`, `etl-target-fabric`, and `fabric-etl-migration-accelerator`, which embeds the Jinja2 templates and vendored HTMX/CSS/JS assets), install them into an isolated `build\app-venv`, and launch the loopback UI server:
+
+```powershell
+pwsh -NoProfile -File scripts\Start-LocalApp.ps1
+```
+
+Pass `-Port <port>` to customize the loopback port, `-Desktop` to open the native Windows WebView2 window from the built wheels, or `-VerifyOnly` to validate wheel installation and `/health` + `/api/targets` startup without keeping the server running.
+
+### Editable developer installation
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ./packages/etl-migration-core -e ./packages/etl-portfolio-assessment -e ./packages/etl-target-fabric -e ".[dev]"
+```
+
+### Start the integrated UI and API server
+
+```powershell
+tool serve --port 8050
+```
+
+The FastAPI server binds strictly to `127.0.0.1:8050` and serves the Python Jinja2 + HTMX workbench from `src/accelerator/ui/` (no Node.js build step required).
+
+Assessment runs, immutable snapshots, capacity inputs, and generation jobs are persisted in SQLite WAL under `ACCELERATOR_STATE_DIR` (`.accelerator` by default). Theme preference is persisted in browser `localStorage`.
+
+### UI reload development mode
+
+When iterating on the Python UI templates or styles (`src/accelerator/ui/`):
+
+```powershell
+uvicorn accelerator.api:app --host 127.0.0.1 --port 8050 --reload
+```
+
+## Option 2: CLI-Only Execution
+
+For headless estate discovery, JSON assessment reports, or deterministic Fabric definition generation:
+
+```powershell
+python -m pip install -e ./packages/etl-migration-core -e ./packages/etl-portfolio-assessment -e ./packages/etl-target-fabric -e .
+tool preview C:\path\to\estate
+tool assess C:\path\to\estate
+```
+
+## Option 3: Windows Desktop Utility
+
+The desktop utility keeps the existing deterministic FastAPI + Jinja2 + HTMX
+application and hosts it in a native Microsoft Edge WebView2 window. It binds
+an authenticated API to a random loopback port and does not expose a fixed
+network listener.
+
+### Run from source
+
+Install the optional desktop runtime and launch:
+
+```powershell
+python -m pip install -e ./packages/etl-migration-core -e ./packages/etl-portfolio-assessment -e ./packages/etl-target-fabric -e ".[desktop]"
+tool desktop
+```
+
+Use `tool desktop --debug` to open WebView developer
+tools while troubleshooting.
+
+### Build the portable desktop package
+
+```powershell
+.\scripts\Build-Desktop.ps1
+```
+
+The build produces:
+
+```text
+dist\desktop\FabricETLMigrationAccelerator\FabricETLMigrationAccelerator.exe
+dist\desktop\FabricETLMigrationAccelerator-windows-x64.zip
+```
+
+Extract the entire ZIP before running the executable. Do not copy only the EXE;
+the adjacent `_internal` directory contains the Python runtime, WebView host,
+and embedded UI templates/static assets. Microsoft Edge WebView2 Runtime must be installed. It is
+included with supported Windows 10 and Windows 11 installations and can be
+installed separately by enterprise administrators.
+
+Desktop state is isolated per Windows user:
+
+```text
+%LOCALAPPDATA%\Fabric ETL Migration Accelerator\
+  state\runs.db
+  artifacts\
+  logs\desktop.log
+  webview\
+```
+
+Only one desktop instance runs per Windows user. Closing the window shuts down
+its random-port API. The launcher verifies the authenticated API, HTML, and
+compiled JavaScript and CSS before showing the window.
+
+The package does not contain `.env`, GitHub App private keys, Entra client
+secrets, or customer data. Assessment works without deployment credentials. To
+use GitHub dispatch from the desktop, prefer the authenticated GitHub CLI:
+
+```powershell
+gh auth login
+[Environment]::SetEnvironmentVariable('GITHUB_AUTH_MODE', 'gh-cli', 'User')
+[Environment]::SetEnvironmentVariable(
+  'GITHUB_ALLOWED_REPOSITORIES',
+  'owner/repository',
+  'User'
+)
+```
+
+Set `FABRIC_WORKSPACE_ID` or `ACCELERATOR_DEV_WORKSPACE` as a Windows user
+environment variable when dispatching Development deployment. Fabric execution
+credentials remain in protected GitHub environments.
+
+### Desktop security boundary
+
+The initial native window URL contains a random per-launch token that is
+immediately exchanged for an HTTP-only session cookie and removed by redirect.
+Every embedded API request requires that cookie or the private launch header.
+PyWebView private mode prevents browser state from becoming a cross-launch
+authentication mechanism. This remains a single-user desktop boundary; it is
+not a multi-user hosted service.
+
+## Option 4: Container Runtime (Server Mode and Local Loopback)
+
+Build and run the multi-stage Python container image (`python:3.12-slim` wheel builder + `python:3.12-slim` runtime, zero Node.js stages). The container runs as non-root `USER accelerator`, defines a `HEALTHCHECK` against `/health`, and defaults to hardened `server` mode (`ACCELERATOR_MODE=server`, `ACCELERATOR_ALLOW_LOCAL_FILESYSTEM=false`):
+
+```powershell
+docker build -t fabric-etl-accelerator:1.0.0 .
+
+# Hardened server mode (requires Authorization: Bearer <token> on /api/*; local filesystem disabled)
+docker run --rm -p 127.0.0.1:8050:8050 -v fabric-etl-state:/data `
+  -e ACCELERATOR_API_TOKEN="<strong-random-token>" `
+  fabric-etl-accelerator:1.0.0
+
+# Local loopback browser UI mode
+docker run --rm -p 127.0.0.1:8050:8050 -v fabric-etl-state:/data `
+  -e ACCELERATOR_MODE=local `
+  fabric-etl-accelerator:1.0.0
+```
+
+> **Security Note:** In `server` mode, `/api/*` fails closed (`503`) if `ACCELERATOR_API_TOKEN` is unset, and `/api/intake/preview`, `/api/snapshots/local`, and `/api/snapshots/browse-folder` return `403`. Set `ACCELERATOR_ALLOWED_HOSTS` when accessing the container via a non-localhost hostname (exact hosts or `*.domain` wildcards). `/health`, `/livez`, and `/readyz` stay reachable without a Bearer token for container orchestration probes.
+
+## Option 5: Development Container
+
+Open the repository in a development container to use the supported
+Microsoft Python 3.12 image based on Debian Bookworm. The container installs
+PowerShell 7, GitHub CLI, optional Node.js 22 (for Fabric bundle scripts), and Python dependencies via `pip` during creation.
+
+The development container is for local authoring and validation. Generated
+Fabric notebooks must be validated separately against Fabric Runtime 2.0.
+
+## Environment Variables
+
+Copy [`.env.sample`](../../.env.sample) to `.env` only when testing local CI dispatch or dry-run workspace policy checks. `.env` and `.accelerator/` are excluded from Git and Docker build contexts.
+
+The CLI, local API, and desktop shell read the same runtime settings. Blank values are
+treated as unset. The CLI also accepts `--state-dir` (and `--output` for `generate`), which
+override the variables.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ACCELERATOR_STATE_DIR` | `.accelerator` | Run database, snapshots, generation jobs, and local publications. Point the CLI and the API at the same directory to see the same runs. |
+| `ACCELERATOR_ARTIFACT_DIR` | `generated-fabric-workflows` | Shared artifact output used by `tool generate` and synchronous `POST /api/runs/{id}/generate`. Generation jobs do not write this directory. |
+| `ACCELERATOR_PLUGIN_ALLOWLIST` | unset (load every installed plugin) | Comma-separated entry-point names allowed to load, for example `ssis,databricks`. Others are never imported and are reported as `skipped` by `GET /api/plugins`. It applies to the portal, the CLI, and the library and stateless-CLI registries alike. |
+| `ACCELERATOR_LOG_LEVEL` | `INFO` | Level for the `accelerator` and `etl_*` loggers. Logs go to standard error, including run stage timings. |
+| `ACCELERATOR_LOG_FORMAT` | `text` | Log output format: `text` or single-line structured `json` (including bound `request_id` and `run_id` correlation fields). |
+| `ACCELERATOR_WORKER_CONCURRENCY` | `2` | Number of background worker threads (`1`–`16`) for queued assessment runs and generation jobs. |
+| `ACCELERATOR_MODE` | `local` (`server` in Docker) | Runtime security posture: `local`, `desktop`, or `server`. In `server` mode, `/api/*` requires Bearer authentication and local filesystem routes are disabled by default. |
+| `ACCELERATOR_ALLOWED_HOSTS` | `127.0.0.1,localhost` | Comma-separated allowed HTTP `Host` values (supports exact hosts and `*.domain` wildcards). |
+| `ACCELERATOR_ALLOW_LOCAL_FILESYSTEM` | `true` (`false` in `server` mode) | Controls whether `/api/intake/preview`, `/api/snapshots/local`, and `/api/snapshots/browse-folder` are enabled. |
+| `ACCELERATOR_API_TOKEN` | unset | Bearer token required on `/api/*` in `server` mode (`Authorization: Bearer <token>`). Fails closed (`503`) if unset in `server` mode. |
+
+### Local state and retention
+
+The run database (`runs.db`, SQLite WAL, schema version 8) is migrated in place when the
+application starts. Schema 7 appends `generation_jobs` and schema 8 appends
+`runs.assessment_basis`. A database written by a newer
+release is rejected rather than downgraded. Parsed IR, assessment caches, snapshots,
+publications, and generation jobs grow with every run, so apply the retention policy
+periodically with the portal stopped:
+
+```powershell
+tool gc --dry-run                       # report what would be removed
+tool gc --max-age-days 30 --max-cache-mib 512
+```
+
+`tool gc` removes finished runs and unreferenced snapshots older than the age limit,
+their local publications and generation jobs, and the coldest cache entries until the
+cache fits the size limit. Queued and running assessment runs are always kept. A
+finished run is also kept while one of its generation jobs is queued or running.
+The snapshots those runs use are kept with them. Each
+completed run records stage timings (`verify_ms`, `assess_ms`, `persist_ms`,
+`total_ms`) that `GET /api/runs/{id}/status` returns.

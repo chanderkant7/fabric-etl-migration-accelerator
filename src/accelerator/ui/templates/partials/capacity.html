@@ -1,0 +1,220 @@
+<div class="page-header">
+  <div>
+    <h1>Fabric Capacity Estimate</h1>
+    <p>Deterministic F-SKU capacity model (v{{ estimate.model_version if estimate else '3.1.0' }}) for Dataflow Gen2, Fabric Notebook, Pipeline, and Mixed workloads.</p>
+  </div>
+  {% if run and run.status == 'completed' %}
+  <div class="btn-row">
+    <a class="btn btn-sm" href="/api/runs/{{ run.id }}/capacity/export?format=json">Export JSON</a>
+    <a class="btn btn-sm" href="/api/runs/{{ run.id }}/capacity/export?format=csv">Export Capacity CSV</a>
+  </div>
+  {% endif %}
+</div>
+
+{% if not run or not estimate %}
+<div class="card"><div class="empty-inline">Select a completed assessment run to model Fabric capacity.</div></div>
+{% else %}
+{% if error %}
+<div class="banner banner-err"><span>{{ error }}</span></div>
+{% endif %}
+{% if saved_notice %}
+<div class="banner banner-ok"><span>{{ saved_notice }}</span></div>
+{% endif %}
+
+{% set billing_mode = estimate.settings.spark_billing_mode %}
+<div class="card" style="border-left: 4px solid var(--accent);">
+  <div class="page-header" style="margin-bottom: 4px;">
+    <h2 style="margin: 0;">
+      {% if estimate.status == 'not_available' %}
+      No workflows are eligible for this model
+      {% else %}
+      Preliminary recommendation: {{ optimized_sku }}
+      {% endif %}
+    </h2>
+    <span class="badge {% if estimate.status == 'planning_estimate' %}badge-ok{% elif estimate.status == 'inputs_required' %}badge-warn{% else %}badge-err{% endif %}">
+      {{ 'Preliminary (confirmed)' if estimate.status == 'planning_estimate' else ('Default assumptions' if estimate.status == 'inputs_required' else 'Not available') }}
+    </span>
+  </div>
+  <p style="margin: 0; color: var(--muted); font-size: 13px;">
+    {% if estimate.status == 'inputs_required' %}
+    {{ estimate.unconfirmed_count }} modeled workflow(s) currently use initial defaults (Daily, 1,000 rows). Edit refresh intervals, row counts, or Spark presets below and click <strong>Save &amp; Recalculate</strong> to confirm.
+    {% else %}
+    Validate representative workloads with Fabric Capacity Metrics before purchase commitments.
+    {% endif %}
+  </p>
+</div>
+
+<div class="kpi-grid">
+  {% for scenario in estimate.scenarios %}
+  <div class="kpi">
+    <div class="kpi-label">{{ scenario.name }} SKU</div>
+    <div class="kpi-value">{{ scenario.recommended_sku }}</div>
+    <div class="kpi-sub">{{ scenario.required_cu | round(2) }} required CUs</div>
+  </div>
+  {% endfor %}
+  <div class="kpi">
+    <div class="kpi-label">Base F-SKU Monthly Demand</div>
+    <div class="kpi-value">{{ estimate.monthly_cu_hours | round(1) }}</div>
+    <div class="kpi-sub">{{ 'CU-hours (Dataflow + Pipeline)' if billing_mode == 'autoscale' else 'CU-hours across modeled workflows' }}</div>
+  </div>
+  {% if billing_mode == 'autoscale' %}
+  <div class="kpi">
+    <div class="kpi-label">Autoscale Spark Demand</div>
+    <div class="kpi-value">{{ estimate.autoscale_spark_monthly_cu_hours | round(1) }}</div>
+    <div class="kpi-sub">Spark CU-hours/month billed separately</div>
+  </div>
+  {% endif %}
+</div>
+
+<form hx-post="/ui/capacity" hx-target="#stage" hx-swap="innerHTML">
+  <input type="hidden" name="run_id" value="{{ run.id }}" />
+
+  <div class="card">
+    <h2>Portfolio &amp; Spark Billing Settings</h2>
+    <div class="form-row">
+      <div class="field">
+        <label for="cap-billing-mode">Spark Notebook Billing Mode</label>
+        <select id="cap-billing-mode" name="spark_billing_mode">
+          <option value="capacity" {% if billing_mode == 'capacity' %}selected{% endif %}>Include in F-SKU (Default)</option>
+          <option value="autoscale" {% if billing_mode == 'autoscale' %}selected{% endif %}>Autoscale Billing for Spark</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="cap-users">Interactive Users (0 = ETL-only)</label>
+        <input id="cap-users" name="active_users_per_day" type="number" min="0" value="{{ estimate.settings.peak_concurrent_users }}" />
+      </div>
+      <div class="field">
+        <label for="cap-days">Days / Month</label>
+        <input id="cap-days" name="days_per_month" type="number" min="1" max="366" value="{{ estimate.settings.days_per_month }}" />
+      </div>
+      <div class="field">
+        <label for="cap-util">Target Utilization (0–1)</label>
+        <input id="cap-util" name="target_utilization" type="number" step="0.05" min="0.1" max="1" value="{{ estimate.settings.target_utilization }}" />
+      </div>
+      <div class="field">
+        <label for="cap-burst">Burst Window (min)</label>
+        <input id="cap-burst" name="burst_window_minutes" type="number" min="1" max="1440" value="{{ estimate.settings.burst_window_minutes }}" />
+      </div>
+      <button type="submit" class="btn btn-primary">Save &amp; Recalculate</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="page-header" style="margin-bottom: 10px;">
+      <div>
+        <h2 style="margin: 0;">Editable Workflow Operational Inputs ({{ estimate.workflows | length }})</h2>
+        <p style="margin: 2px 0 0; color: var(--muted); font-size: 12.5px;">
+          Adjust run frequency, source rows per run, Spark vCores, and optional notebook runtime per workflow. Saving recalculates and confirms the values.
+        </p>
+      </div>
+      <button type="submit" class="btn btn-primary btn-sm">Save &amp; Recalculate</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Workflow</th>
+            <th>Refresh Interval</th>
+            <th>Rows / Run</th>
+            <th>Spark vCores / Runtime</th>
+            <th>Components (CU-s)</th>
+            <th>CU-s / Run</th>
+            <th>Monthly CU-h</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for w in estimate.workflows %}
+          {% set i = loop.index0 %}
+          {% set uses_notebook = (w.status != 'excluded') and ('Fabric Notebook' in (w.target_components or [])) %}
+          <tr>
+            <td>
+              <strong>{{ w.workflow_path }}</strong>
+              <span class="cell-note">
+                {{ w.target_components | join(' + ') if w.target_components else w.recommended_target }}
+                {% if w.model_basis %} · {{ 'Calibrated' if w.model_basis == 'calibrated' else 'Heuristic' }}{% endif %}
+                {% if w.status == 'excluded' %} · <span class="badge badge-err">excluded</span>{% endif %}
+              </span>
+              {% if w.exclusion_reason %}<span class="cell-note">{{ w.exclusion_reason }}</span>{% endif %}
+            </td>
+            <td>
+              {% if w.status == 'excluded' %}
+              —
+              {% else %}
+              <input type="hidden" name="wf_path_{{ i }}" value="{{ w.workflow_path }}" />
+              <select class="compact-input" name="wf_refresh_{{ i }}" aria-label="Refresh interval for {{ w.workflow_path }}">
+                {% for val, lbl in [(15, '15 min'), (30, '30 min'), (60, '60 min'), (120, '2 hr (120m)'), (240, '4 hr (240m)'), (360, '6 hr (360m)'), (720, '12 hr (720m)'), (1440, 'Daily (1440m)')] %}
+                <option value="{{ val }}" {% if w.refresh_interval_minutes == val %}selected{% endif %}>{{ lbl }}</option>
+                {% endfor %}
+              </select>
+              {% endif %}
+            </td>
+            <td>
+              {% if w.status == 'excluded' %}
+              —
+              {% else %}
+              <input class="compact-input" type="number" min="1" name="wf_rows_{{ i }}"
+                aria-label="Source rows for {{ w.workflow_path }}"
+                value="{{ w.source_rows_per_run }}" />
+              {% if w.duration_driver and w.row_volume_threshold %}
+              <span class="cell-note">
+                {% if w.duration_driver == 'row_volume' %}Row volume drives duration{% else %}{{ w.duration_driver | title }} until ~{{ w.row_volume_threshold }} rows{% endif %}
+              </span>
+              {% endif %}
+              {% endif %}
+            </td>
+            <td>
+              {% if not uses_notebook %}
+              —
+              {% else %}
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <select class="compact-input" name="wf_vcores_{{ i }}" aria-label="Spark vCores for {{ w.workflow_path }}">
+                  {% for vc, vlbl in [(4, 'Small (4 vCores)'), (8, 'Medium (8 vCores)'), (16, 'Large (16 vCores)'), (32, '2x Large (32 vCores)'), (64, '4x Large (64 vCores)')] %}
+                  <option value="{{ vc }}" {% if w.spark_vcores == vc %}selected{% endif %}>{{ vlbl }}</option>
+                  {% endfor %}
+                </select>
+                <input class="compact-input" type="number" min="1" max="86400" name="wf_runtime_{{ i }}"
+                  aria-label="Notebook runtime seconds for {{ w.workflow_path }}"
+                  placeholder="Auto ({{ (w.effective_notebook_runtime_seconds | round(0) | int) if w.effective_notebook_runtime_seconds else 'sec' }}s)"
+                  value="{{ w.notebook_runtime_seconds if w.notebook_runtime_seconds is not none else '' }}" />
+              </div>
+              {% endif %}
+            </td>
+            <td style="font-size:12px;">
+              {% if w.status == 'excluded' %}—{% else %}
+              {% if w.dataflow_cu_seconds_per_run %}DF {{ w.dataflow_cu_seconds_per_run | round(0) | int }}{% endif %}
+              {% if w.notebook_cu_seconds_per_run %} · NB {{ w.notebook_cu_seconds_per_run | round(0) | int }}{% endif %}
+              {% if w.pipeline_cu_seconds_per_run %} · PL {{ w.pipeline_cu_seconds_per_run | round(0) | int }}{% endif %}
+              {% endif %}
+            </td>
+            <td>{{ (w.cu_seconds_per_run | round(1)) if w.cu_seconds_per_run is not none else '—' }}</td>
+            <td><strong>{{ (w.monthly_cu_hours | round(2)) if w.monthly_cu_hours is not none else '—' }}</strong></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</form>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Coverage</h2>
+    <div class="fact-grid">
+      <div class="fact"><span>Modeled</span><strong>{{ estimate.modeled_count }}</strong></div>
+      <div class="fact"><span>Calibrated (Dataflow)</span><strong>{{ estimate.calibrated_count }}</strong></div>
+      <div class="fact"><span>Heuristic (Notebook/Mixed)</span><strong>{{ estimate.heuristic_count }}</strong></div>
+      <div class="fact"><span>Excluded</span><strong>{{ estimate.excluded_count }}</strong></div>
+      <div class="fact"><span>Coverage</span><strong>{{ estimate.coverage_percent | round(0) | int }}%</strong></div>
+      <div class="fact"><span>Model Version</span><strong>v{{ estimate.model_version }}</strong></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>Assumptions &amp; Limitations</h2>
+    <ul style="margin:0;padding-left:18px;font-size:12.5px;color:var(--muted);">
+      {% for item in estimate.assumptions %}
+      <li>{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}

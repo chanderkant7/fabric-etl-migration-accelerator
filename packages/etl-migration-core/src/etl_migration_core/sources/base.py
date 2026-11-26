@@ -1,0 +1,100 @@
+"""Contracts implemented by source-specific ETL adapters."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from etl_migration_core.contracts.ir import EtlPackage, SourcePlatformId
+
+
+class SourceParseError(ValueError):
+    """Raised when a staged source item cannot be safely parsed."""
+
+
+class SourceMatch(BaseModel):
+    """Bounded adapter detection result for one staged source item."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    adapter_id: str = Field(min_length=1, max_length=128)
+    platform: SourcePlatformId
+    product: str = Field(min_length=1, max_length=256)
+    asset_type: str = Field(min_length=1, max_length=128)
+    confidence: int = Field(ge=1, le=100)
+    display_path: str = Field(min_length=1, max_length=4096)
+    product_version: str | None = Field(default=None, max_length=128)
+
+
+class SourceAdapter(Protocol):
+    """Source adapter interface used by discovery and run orchestration."""
+
+    @property
+    def adapter_id(self) -> str:
+        """Return the stable adapter identity."""
+
+    @property
+    def platform(self) -> SourcePlatformId:
+        """Return the normalized source platform."""
+
+    @property
+    def product(self) -> str:
+        """Return the source product display name."""
+
+    @property
+    def adapter_version(self) -> str:
+        """Return the adapter contract version."""
+
+    @property
+    def parser_version(self) -> str:
+        """Return the native parser version."""
+
+    @property
+    def registry_version(self) -> str:
+        """Return the platform support registry version."""
+
+    @property
+    def rules_version(self) -> str:
+        """Return the platform assessment rules version."""
+
+    def probe(self, path: Path, display_path: str) -> SourceMatch | None:
+        """Return a confidence-ranked match without executing source content."""
+
+    def parse(self, path: Path, match: SourceMatch) -> EtlPackage:
+        """Parse one staged source item into the canonical ETL IR."""
+
+
+@runtime_checkable
+class SourceFileDiscoveryAdapter(Protocol):
+    """Optional file-extension declaration for local plugin discovery."""
+
+    @property
+    def supported_extensions(self) -> tuple[str, ...]:
+        """Return lowercase extensions accepted by the adapter."""
+
+
+@runtime_checkable
+class SourceArchiveDiscoveryAdapter(Protocol):
+    """Optional archive-extension declaration for ZIP-based package formats."""
+
+    @property
+    def archive_extensions(self) -> tuple[str, ...]:
+        """Return lowercase archive extensions (e.g. ``('.yxzp',)``) to scan as ZIPs."""
+
+
+@runtime_checkable
+class SourceDirectoryDiscoveryAdapter(Protocol):
+    """Optional directory-package recognition (e.g. multi-file export trees)."""
+
+    def matches_directory(self, root: Path) -> bool:
+        """Return True when ``root`` is a self-contained export directory for this adapter."""
+
+
+@runtime_checkable
+class SourceStreamProbeAdapter(Protocol):
+    """Optional in-memory byte probe to avoid temporary files during archive discovery."""
+
+    def probe_bytes(self, content: bytes, display_path: str) -> SourceMatch | None:
+        """Return a confidence-ranked match from raw file bytes without executing content."""

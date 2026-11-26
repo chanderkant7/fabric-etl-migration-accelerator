@@ -1,0 +1,233 @@
+<div class="page-header" data-page-nav="deployment">
+  <div>
+    <h1>Fabric Code Generation &amp; Deployment</h1>
+    <p>Confirm Fabric routes with the compilers, generate and review M / PySpark / Pipeline definitions, download ZIP packages, and run dry-run or CI dispatch.</p>
+  </div>
+  {% if run %}
+  <span class="badge {% if run.routing_basis == 'compiler_confirmed' %}badge-ok{% else %}badge-info{% endif %}">
+    Routing basis: {{ run.routing_basis }}
+  </span>
+  {% endif %}
+</div>
+
+{% if not run or not run.result %}
+<div class="card"><div class="empty-inline">Select a completed assessment run to generate Fabric artifacts or deploy.</div></div>
+{% else %}
+<div class="card">
+  <h2>1. Destination Platform</h2>
+  <p style="margin:0 0 10px;color:var(--muted);font-size:12.5px;">Microsoft Fabric code generation and CI dispatch are ready; other destination platforms appear as roadmap placeholders.</p>
+  <div class="stage-grid" style="margin-bottom:0;">
+    {% for t in targets %}
+    <div class="fact" style="{% if t.implemented %}border-color:var(--accent);background:var(--surface);{% else %}opacity:0.75;{% endif %}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+        <strong>{{ t.display_name }}</strong>
+        <span class="badge {% if t.implemented %}badge-ok{% else %}badge-warn{% endif %}">
+          {{ 'Ready' if t.implemented else 'Roadmap' }}
+        </span>
+      </div>
+      <span style="margin-top:4px;">{{ t.description }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h2>2. Generate &amp; Download Recommended Fabric Definitions</h2>
+  <p style="margin:0 0 12px;color:var(--muted);font-size:12.5px;">
+    Each workflow already has a compiler-confirmed Fabric recommendation. Generate code using the recommended item(s) directly—nothing is written to disk or deployed until you dispatch.
+  </p>
+
+  <div class="form-row" style="margin-bottom:12px;">
+    <div class="field" style="max-width:560px;">
+      <label for="deploy-workflow">Workflow Scope</label>
+      <select id="deploy-workflow" name="workflow"
+        hx-get="/ui/deployment"
+        hx-vals='{"run_id": "{{ run.id }}"}'
+        hx-target="#stage"
+        hx-swap="innerHTML"
+        hx-trigger="change">
+        <option value="">All assessed workflows ({{ run.result.assessments | length }})</option>
+        {% for wf in run.result.assessments %}
+        <option value="{{ wf.path }}" {% if wf.path == selected_workflow %}selected{% endif %}>
+          {{ wf.path }} · {{ wf.target_components | join(' + ') if wf.target_components else wf.recommended_target }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div class="banner banner-info" style="font-size:12.5px;margin-bottom:12px;">
+    {% if selected_wf %}
+    <span>
+      <strong>Recommended for {{ selected_wf.path }}:</strong>
+      {% if selected_wf.target_components %}
+        {% for comp in selected_wf.target_components %}
+        <span class="badge badge-ok">{{ comp }}</span>
+        {% endfor %}
+      {% else %}
+        <span class="badge badge-err">{{ selected_wf.recommended_target }}</span>
+      {% endif %}
+      — {{ selected_wf.recommendation_reason }}
+    </span>
+    {% else %}
+    <span>
+      <strong>Estate recommendation breakdown:</strong>
+      {% if dep_counts.dataflow %}<span class="badge badge-ok">{{ dep_counts.dataflow }} Dataflow Gen2</span>{% endif %}
+      {% if dep_counts.notebook %}<span class="badge badge-info">{{ dep_counts.notebook }} Fabric Notebook</span>{% endif %}
+      {% if dep_counts.pipeline %}<span class="badge">{{ dep_counts.pipeline }} Fabric Pipeline</span>{% endif %}
+      {% if dep_counts.manual %}<span class="badge badge-err">{{ dep_counts.manual }} Manual rework</span>{% endif %}
+    </span>
+    {% endif %}
+  </div>
+
+  <div class="grid-2" style="margin-bottom:12px;">
+    <div class="fact" style="background:var(--soft);padding:14px;">
+      <strong style="margin-bottom:4px;">Generate &amp; Review Code (in browser)</strong>
+      <span style="margin-bottom:10px;">
+        {% if selected_wf %}
+        Compiles the confirmed {{ selected_wf.target_components | join(' + ') if selected_wf.target_components else 'diagnostic scaffold' }} for this workflow.
+        {% else %}
+        Compiles every workflow using its confirmed Fabric target (no unnecessary scaffolds for unrelated item types).
+        {% endif %}
+      </span>
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary"
+          hx-post="/ui/deployment/preview"
+          hx-include="#deploy-workflow"
+          hx-vals='{"run_id": "{{ run.id }}", "target": "recommended"}'
+          hx-target="#deployment-preview-host"
+          hx-swap="innerHTML">
+          Generate Recommended Code
+        </button>
+      </div>
+      <details style="margin-top:10px;font-size:12px;">
+        <summary style="cursor:pointer;color:var(--muted);">Override: generate a specific item type instead</summary>
+        <div class="btn-row" style="margin-top:8px;">
+          <button type="button" class="btn btn-sm"
+            hx-post="/ui/deployment/preview"
+            hx-include="#deploy-workflow"
+            hx-vals='{"run_id": "{{ run.id }}", "target": "notebook"}'
+            hx-target="#deployment-preview-host"
+            hx-swap="innerHTML">
+            Notebook (PySpark)
+          </button>
+          <button type="button" class="btn btn-sm"
+            hx-post="/ui/deployment/preview"
+            hx-include="#deploy-workflow"
+            hx-vals='{"run_id": "{{ run.id }}", "target": "dataflow"}'
+            hx-target="#deployment-preview-host"
+            hx-swap="innerHTML">
+            Dataflow (Power Query M)
+          </button>
+          <button type="button" class="btn btn-sm"
+            hx-post="/ui/deployment/preview"
+            hx-include="#deploy-workflow"
+            hx-vals='{"run_id": "{{ run.id }}", "target": "pipeline"}'
+            hx-target="#deployment-preview-host"
+            hx-swap="innerHTML">
+            Pipeline (JSON)
+          </button>
+        </div>
+      </details>
+    </div>
+
+    <div class="fact" style="background:var(--soft);padding:14px;">
+      <strong style="margin-bottom:4px;">Download Fabric Packages (ZIP)</strong>
+      <span style="margin-bottom:10px;">
+        {% if selected_wf %}
+        Download the complete recommended ZIP bundle for this workflow, or download portfolio-wide item ZIPs.
+        {% else %}
+        Download compiled Fabric packages grouped by item type (counts reflect recommended routes).
+        {% endif %}
+      </span>
+      <div class="btn-row">
+        {% if selected_wf %}
+        <a class="btn btn-primary btn-sm" href="/api/runs/{{ run.id }}/bundle?workflow={{ selected_wf.path | urlencode }}">
+          Download Recommended Bundle ZIP
+        </a>
+        {% endif %}
+        {% if dep_counts.notebook %}
+        <a class="btn btn-sm" href="/api/runs/{{ run.id }}/candidates?target=notebook">Notebook ZIP ({{ dep_counts.notebook }})</a>
+        {% endif %}
+        {% if dep_counts.dataflow %}
+        <a class="btn btn-sm" href="/api/runs/{{ run.id }}/candidates?target=dataflow">Dataflow ZIP ({{ dep_counts.dataflow }})</a>
+        {% endif %}
+        {% if dep_counts.pipeline %}
+        <a class="btn btn-sm" href="/api/runs/{{ run.id }}/candidates?target=pipeline">Pipeline ZIP ({{ dep_counts.pipeline }})</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div id="deployment-preview-host" style="margin-top: 12px;"></div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>3a. Dry-Run Deployment Validation</h2>
+    <p style="color: var(--muted); margin-top: 0;">Validate compiled definitions and workspace policy without calling live Fabric APIs.</p>
+    <form hx-post="/ui/deployment/dry-run" hx-target="#deployment-result-host" hx-swap="innerHTML">
+      <input type="hidden" name="run_id" value="{{ run.id }}" />
+      <div class="form-row">
+        <div class="field">
+          <label for="dryrun-ws">Workspace ID (optional)</label>
+          <input id="dryrun-ws" name="workspace_id" type="text" placeholder="GUID or leave blank for local dry-run" />
+        </div>
+        <button type="submit" class="btn btn-primary">Run Dry-Run Check</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>3b. CI/CD Dispatch</h2>
+    <p style="color: var(--muted); margin-top: 0;">Dispatch an existing GitHub Actions or GitLab CI workflow (credentials stay server-side).</p>
+    <form hx-post="/ui/deployment/dispatch" hx-target="#deployment-result-host" hx-swap="innerHTML">
+      <input type="hidden" name="run_id" value="{{ run.id }}" />
+      <div class="form-row">
+        <div class="field" style="max-width: 150px;">
+          <label for="ci-provider">Provider</label>
+          <select id="ci-provider" name="provider">
+            <option value="gitlab">GitLab CI</option>
+            <option value="github">GitHub Actions</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="ci-repo">Project / Repository</label>
+          <input id="ci-repo" name="repository" type="text" placeholder="group/project or owner/repo" required />
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label for="ci-workflow">Workflow</label>
+          <select id="ci-workflow" name="source_workflow" required>
+            {% for wf in run.result.assessments %}
+            <option value="{{ wf.path }}" {% if wf.path == selected_workflow %}selected{% endif %}>
+              {{ wf.path }} · {{ wf.target_components | join(' + ') if wf.target_components else wf.recommended_target }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field" style="max-width: 210px;">
+          <label for="ci-target">Fabric Item Type</label>
+          <select id="ci-target" name="target">
+            <option value="recommended" selected>Recommended (auto)</option>
+            <option value="notebook">Override: Fabric Notebook</option>
+            <option value="dataflow">Override: Dataflow Gen2</option>
+            <option value="pipeline">Override: Fabric Pipeline</option>
+            <option value="bundle">Override: Combined Bundle</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label for="ci-ref">Branch / Ref</label>
+          <input id="ci-ref" name="ref" type="text" value="main" required />
+        </div>
+        <button type="submit" class="btn">Dispatch CI</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="deployment-result-host"></div>
+{% endif %}

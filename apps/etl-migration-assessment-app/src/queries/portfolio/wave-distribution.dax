@@ -1,0 +1,18 @@
+EVALUATE
+CALCULATETABLE(
+    SELECTCOLUMNS(
+        FILTER(
+            {
+                ("Wave 1", [Wave 1 Assets]),
+                ("Wave 2", [Wave 2 Assets]),
+                ("Wave 3", [Wave 3 Assets]),
+                ("Wave 4", [Wave 4 Assets])
+            },
+            [Value2] > 0
+        ),
+        "MigrationWave", [Value1],
+        "Assets", [Value2]
+    ),
+    'AssessmentRun'[IsLatestCompletedRun] = TRUE()
+)
+

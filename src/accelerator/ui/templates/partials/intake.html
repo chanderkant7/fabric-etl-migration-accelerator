@@ -1,0 +1,200 @@
+<div class="page-header">
+  <div>
+    <h1>New Assessment Intake</h1>
+    <p>Discover and stage Alteryx, Informatica PowerCenter, or IDMC exports into an immutable snapshot without executing source workflows.</p>
+  </div>
+  <span class="badge badge-info">Static · Non-executing</span>
+</div>
+
+{% if error %}
+<div class="banner banner-err">
+  <span>{{ error }}</span>
+</div>
+{% endif %}
+
+<div class="grid-2">
+  {% if allow_local_filesystem %}
+  <div class="card">
+    <h2>Local Path Intake</h2>
+    <p style="color: var(--muted); margin-top: 0;">Point to a local file, `.zip`/`.yxzp` archive, or folder (up to 2 GiB).</p>
+    <form hx-post="/ui/intake/local" hx-target="#stage" hx-swap="innerHTML">
+      <div class="form-row">
+        <div class="field">
+          <label for="local-source-family">Source Family</label>
+          <select id="local-source-family" name="source_family">
+            <option value="">Auto-detect</option>
+            <option value="alteryx" {% if source_family == 'alteryx' %}selected{% endif %}>Alteryx (.yxmd, .yxmc, .yxwz, .yxzp)</option>
+            <option value="informatica" {% if source_family == 'informatica' %}selected{% endif %}>Informatica (PowerCenter XML / IDMC ZIP)</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label for="local-path-input">Folder or File Path</label>
+          <input id="local-path-input" name="path" type="text" placeholder="e.g. alteryx-workflows" value="{{ local_path or '' }}" required />
+        </div>
+        <button type="button" class="btn" onclick="browseLocalFolder('local-path-input')">Browse…</button>
+      </div>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">Preview Local Snapshot</button>
+        <span class="htmx-indicator">Scanning…</span>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h2>Upload Files or Archive</h2>
+    <p style="color: var(--muted); margin-top: 0;">Upload `.yxmd`, `.yxmc`, `.yxwz`, `.yxzp`, PowerCenter `.xml`, or IDMC `.zip` files (up to 100 MiB).</p>
+    <form hx-post="/ui/intake/upload" hx-target="#stage" hx-swap="innerHTML" hx-encoding="multipart/form-data">
+      <div class="form-row">
+        <div class="field">
+          <label for="upload-source-family">Source Family</label>
+          <select id="upload-source-family" name="source_family">
+            <option value="">Auto-detect</option>
+            <option value="alteryx">Alteryx</option>
+            <option value="informatica">Informatica</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label for="upload-files-input">Select File(s) or Archive</label>
+          <input id="upload-files-input" name="files" type="file" multiple required />
+        </div>
+      </div>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">Upload &amp; Preview</button>
+        <span class="htmx-indicator">Uploading…</span>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>SharePoint Folder</h2>
+    <p style="color: var(--muted); margin-top: 0;">Import a folder from your organization's SharePoint tenant through Microsoft Graph (up to 2 GiB).</p>
+    <form hx-post="/ui/intake/sharepoint" hx-target="#stage" hx-swap="innerHTML">
+      <div class="form-row">
+        <div class="field">
+          <label for="sharepoint-source-family">Source Family</label>
+          <select id="sharepoint-source-family" name="source_family">
+            <option value="">Auto-detect</option>
+            <option value="alteryx" {% if source_family == 'alteryx' %}selected{% endif %}>Alteryx</option>
+            <option value="informatica" {% if source_family == 'informatica' %}selected{% endif %}>Informatica</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="field">
+          <label for="sharepoint-folder-url">SharePoint Folder URL</label>
+          <input id="sharepoint-folder-url" name="folder_url" type="url" placeholder="https://contoso.sharepoint.com/sites/migrations/Shared%20Documents/exports" value="{{ sharepoint_url or '' }}" required />
+        </div>
+      </div>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">Import &amp; Preview</button>
+        <span class="htmx-indicator">Importing…</span>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if snapshot %}
+<div class="card">
+  <div class="page-header" style="margin-bottom: 12px;">
+    <div>
+      <h2 style="margin: 0;">Snapshot Discovery Preview</h2>
+      <p style="margin: 2px 0 0; color: var(--muted);">
+        Snapshot <code>{{ snapshot.snapshot_id[:12] }}</code> ·
+        <strong>{{ snapshot.workflows | length }}</strong> workflow(s) discovered ·
+        <strong>{{ snapshot.skipped | length }}</strong> skipped ·
+        {{ (snapshot.total_size_bytes / 1024) | round(1) }} KiB
+      </p>
+    </div>
+    <form hx-post="/ui/runs/start" hx-target="#stage" hx-swap="innerHTML">
+      <input type="hidden" name="snapshot_id" value="{{ snapshot.snapshot_id }}" />
+      <button type="submit" class="btn btn-primary" {% if not snapshot.workflows %}disabled{% endif %}>
+        Confirm and Assess ({{ snapshot.workflows | length }})
+      </button>
+    </form>
+  </div>
+
+  {% if snapshot.workflows %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Workflow</th>
+          <th>Source</th>
+          <th>Size (KiB)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for wf in snapshot.workflows[:100] %}
+        <tr>
+          <td><code>{{ wf.display_path }}</code></td>
+          <td><span class="badge">{{ wf.source_product or wf.source_platform }}</span></td>
+          <td>{{ (wf.size_bytes / 1024) | round(1) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if snapshot.workflows | length > 100 %}
+  <p style="color: var(--muted); font-size: 12px; margin-top: 8px;">Showing first 100 of {{ snapshot.workflows | length }} discovered items.</p>
+  {% endif %}
+  {% else %}
+  <div class="empty-inline">No supported ETL workflows were discovered in this input.</div>
+  {% endif %}
+
+  {% if snapshot.skipped %}
+  <details style="margin-top: 12px;">
+    <summary style="cursor: pointer; font-weight: 600;">Skipped items ({{ snapshot.skipped | length }})</summary>
+    <ul style="font-size: 12.5px; color: var(--muted);">
+      {% for item in snapshot.skipped[:50] %}
+      <li><code>{{ item.path }}</code> — {{ item.reason }} ({{ item.detail }})</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if runs %}
+<div class="card">
+  <h2>Recent Assessment Runs</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Run ID</th>
+          <th>Status</th>
+          <th>Progress</th>
+          <th>Cache Hits</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in runs[:15] %}
+        <tr>
+          <td><code>{{ r.id[:12] }}</code></td>
+          <td>
+            <span class="badge {% if r.status == 'completed' %}badge-ok{% elif r.status == 'failed' %}badge-err{% elif r.status == 'cancelled' %}badge-warn{% else %}badge-info{% endif %}">
+              {{ r.status }}
+            </span>
+          </td>
+          <td>{{ r.processed }} / {{ r.total }}</td>
+          <td>{{ r.cache_hits }}</td>
+          <td>
+            <button type="button" class="btn btn-sm"
+              hx-get="/ui/portfolio?run_id={{ r.id }}" hx-target="#stage" hx-swap="innerHTML"
+              onclick="setActiveNav('portfolio')">
+              Open
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}

@@ -1,0 +1,312 @@
+---
+title: User Guide
+description: Complete end-to-end user guide for assessing ETL estates, modeling Fabric capacity, generating Fabric artifacts, and deploying via CI/CD
+ms.date: 2026-11-26
+ms.topic: how-to
+---
+
+## Overview
+
+The **Microsoft Fabric ETL Migration Accelerator (FEMA)** provides deterministic discovery, target-neutral portfolio assessment, Microsoft Fabric code generation, F-SKU capacity sizing, and secretless CI/CD deployment for legacy ETL estates.
+
+Supported source formats:
+
+* Alteryx Designer workflows, macros, analytic apps, and packages (`.yxmd`, `.yxmc`, `.yxwz`, `.yxzp`)
+* Informatica PowerCenter repository XML exports (`powrmart.dtd` standalone or zipped)
+* Informatica Intelligent Data Management Cloud (IDMC) export ZIP archives and extracted manifest directories (`.DTEMPLATE`, `.MTT`, `.TASKFLOW`)
+
+Registered destination targets:
+
+* Microsoft Fabric (implemented: target-fit evaluation, F-SKU capacity sizing, Dataflow Gen2, PySpark Notebook, Data Pipeline, and dry-run planning)
+* Azure Databricks, Azure Synapse Analytics, and Snowflake (roadmap placeholders; installing a provider alone does not integrate generation and deployment into the local portal)
+
+For local path-based intake, an extracted IDMC export is copied into a durable snapshot.
+Directory entry and size limits apply, and linked entries are rejected. A changed snapshot
+must be reviewed again.
+
+> [!IMPORTANT]
+> The accelerator never executes imported source workflows, scripts, or SQL statements. Every generated artifact carries `generated_unvalidated` status until required source/destination bindings are wired and independent semantic parity is verified.
+
+## Choose your runtime mode
+
+| Mode | Best suited for | Required runtime | Entry point |
+| :--- | :--- | :--- | :--- |
+| Fabric-native FEMA workspace | Portfolio leadership BI, shared workspace intake, Spark Delta persistence | Microsoft Fabric workspace (Runtime 2.0) | Fabric Analyst App (`fema-etl-migration-app`) and Power BI Report |
+| Power BI Desktop DirectQuery | Local semantic-model and report authoring over Fabric SQL | Power BI Desktop + Lakehouse SQL analytics endpoint | Generated `ETL Migration Assessment.pbip` |
+| Local Analyst Web UI and Desktop | Full interactive assessment, graph inspection, code preview, and GitOps dispatch | Python 3.12+ (`pip`, FastAPI + Jinja2 + HTMX) | `tool serve` or `tool desktop` |
+| Modular Python CLIs (`etl-assess`, `etl-fabric`) | Headless CI pipelines, single-asset inspection, future IDE integrations | Python 3.12+ + core/target wheels | `etl-assess` and `etl-fabric` |
+| Offline browser utility | Air-gapped portfolio triage without Python or server setup | Modern Edge or Chrome | `apps/portable/alteryx-portfolio.html` |
+
+See [Installation and Runtime Modes](installation.md) for deployment commands and container instructions.
+
+## Workflow 1: Fabric-native FEMA workspace
+
+Deploy the FEMA stack into a Microsoft Fabric workspace using [Deploy-AcceleratorWorkspace.ps1](../../scripts/Deploy-AcceleratorWorkspace.ps1) or the in-Fabric [Deploy_FEMA.ipynb](../../notebooks/Deploy_FEMA.ipynb) notebook. All items are organized inside the `FEMA` workspace folder.
+
+### Stage and assess workflows in Fabric
+
+1. Open the deployed Fabric Analyst App (`fema-etl-migration-app`) from your Fabric workspace.
+2. Upload `.yxmd`, `.yxmc`, `.yxwz`, `.yxzp`, PowerCenter `.xml`, or IDMC `.zip` exports (up to 3 MiB per file in browser intake; larger estates can be staged directly in Lakehouse `Files/`).
+3. Start the assessment job. The app triggers `ETL Migration Assessment` (`notebooks/fabric-portfolio-assessment.ipynb`) on Spark Runtime 2.0 using the lightweight `etl-migration-core`, `etl-portfolio-assessment`, and `etl-target-fabric` wheels.
+4. When the notebook finishes, it persists eight `etl_*` Delta tables in `ETL_Migration_Assessment_Lakehouse`, sets `IsLatestCompletedRun = true` on the new run, and triggers a Direct Lake framing refresh on `ETL Migration Assessment Model`.
+
+### Review the 5-page Power BI leadership report
+
+Open `ETL Migration Assessment` (Power BI Report) to inspect portfolio outcomes across five pages:
+
+1. **Executive Summary**: Displays latest-run KPIs, platform distribution, complexity bands, and recommended Fabric targets. Use the **Assessment Run** slicer to switch across historical runs.
+2. **Wave Plan**: Organizes assets into **Wave 1** through **Wave 4**, showing wave counts, complexity, and tool mix for migration sequencing.
+3. **Blockers & Risks**: Surfaces unsupported tools, manual redesign candidates, macro/package dependencies, and parser findings.
+4. **Fabric Capacity**: Estimates CU-seconds per run, monthly CU-hours, and balanced F-SKU recommendations across the assessed portfolio.
+5. **Run History**: Tracks assessment runs over time (`RunId`, timestamp, workflow counts, and failure counts).
+
+### Choose Direct Lake or Power BI Desktop DirectQuery
+
+The deployed FEMA workspace uses a Fabric-hosted Direct Lake semantic model.
+Direct Lake models must exist in Fabric before Power BI Desktop can connect to
+them. Power BI Desktop cannot load the generated Direct Lake TMDL as a local
+`byPath` model.
+
+Use the DirectQuery project when you want to create and publish both the
+semantic model and report from Power BI Desktop:
+
+```powershell
+pwsh -NoProfile `
+  -File scripts\Generate-FabricDirectQueryPowerBIProject.ps1 `
+  -SqlEndpoint "bzz7mf3ncmce5ovoqo4brjwqi4-ctn7lkrvszkejfme6ehmqskeqm.datawarehouse.fabric.microsoft.com" `
+  -DatabaseName "ETL_Migration_Assessment_Lakehouse"
+```
+
+The generator writes a complete local project under
+`dist\directquery-desktop`:
+
+* `ETL Migration Assessment.pbip`
+* `ETL Migration Assessment Model.SemanticModel`
+* `ETL Migration Assessment.Report`
+
+The semantic model contains eight `Sql.Database` partitions using
+`mode: directQuery`. The report uses a local `byPath` reference to the sibling
+semantic model.
+
+Open `dist\directquery-desktop\ETL Migration Assessment.pbip` in Power BI
+Desktop, authenticate to the SQL analytics endpoint with your organizational
+account, verify the model and report, and then select **Home > Publish**.
+
+Use [Manual Fabric Semantic Model and Report Deployment](manual-fabric-deployment.md)
+when deploying the Direct Lake TMDL and PBIR definitions separately through
+Fabric APIs instead.
+
+## Workflow 2: Local Analyst Web UI and Windows Desktop
+
+Build and start the loopback service directly from the built `.whl` packages (`scripts\Start-LocalApp.ps1`), or run in editable developer mode:
+
+```powershell
+pwsh -NoProfile -File scripts\Start-LocalApp.ps1
+```
+
+Open `<http://127.0.0.1:8050>` in your browser, or pass `-Desktop` (`pwsh -NoProfile -File scripts\Start-LocalApp.ps1 -Desktop`) for the native Windows WebView2 window.
+
+### Step 1: Preview and confirm intake
+
+1. Open **New assessment** and pick **Alteryx** or **Informatica**.
+2. Choose a local file or folder, upload files or an archive, or paste a
+   SharePoint folder URL. SharePoint intake reads the folder recursively through
+   Microsoft Graph and applies the same 10,000-entry, 100 MiB-per-file, and
+   2 GiB aggregate bounds as local discovery.
+3. Review the pre-run discovery summary showing accepted candidates, SHA-256 deduplicated skips, and any rejected paths (UNC paths, symlinks, and ZIP-bomb violations are blocked).
+4. Click **Confirm and assess** to start a durable SQLite WAL run. The scheduler
+   processes up to four workflows concurrently and supports lease recovery across
+   restarts. Cancellation stops additional scheduling when observed; it does not
+   interrupt a parser already running.
+
+SharePoint intake uses the server-side `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and
+`AZURE_CLIENT_SECRET` settings, not the deployment script's browser session.
+Paste the full folder sharing link from SharePoint's **Share** / **Copy link**
+action, not a folder name. Sharing links can grant access, so do not include
+their tokens in logs or support requests.
+
+The importer resolves links through Microsoft Graph's
+[`shares` API](https://learn.microsoft.com/en-us/graph/api/shares-get?view=graph-rest-1.0).
+Have your tenant administrator review that endpoint's application-permission
+requirements and grant admin consent according to policy. A `Sites.Selected`
+read grant does not by itself establish access to the sharing-link endpoint.
+The importer does not change permissions automatically.
+
+On failure, the portal reports whether sharing-link resolution or folder
+listing failed, along with the HTTP status, Graph error code, redacted message,
+and request ID when provided. Use those details to diagnose an invalid link or
+permission failure; HTTP `400` alone does not identify the cause.
+
+The portal intake offers Alteryx and Informatica only. A selection that contains assets
+from an external source plugin is rejected with a message. Source and target plugins
+still load, and `tool plugins` and `GET /api/plugins` report their status. A run
+created through the API from a plugin source opens in a target-neutral workspace that
+shows source facts and manual-review findings, and can evaluate registered targets that
+advertise evaluation support. It does not generate or deploy artifacts. The synthetic
+plugin examples demonstrate the integration, not production SSIS or Databricks support.
+
+The remaining steps apply to the existing Alteryx and Informatica Fabric workspace.
+
+### Step 2: Inspect the portfolio and 6-tab workflow drawer
+
+1. Open **Portfolio** to filter assessed workflows by platform, complexity band, target component, or migration wave (**Wave 1** through **Wave 4**), export assessment JSON/CSV reports, or click **Open Fabric Deployment** when ready to generate target code.
+
+   Portfolio assessment is static: it never generates code. Until you open **Fabric Deployment**, the Fabric target, wave, and remaining effort come from the support matrix, and a banner on **Portfolio**, **Workflows**, **Migration Plan**, and **Capacity Planning** reads **Routing basis: static mapping**. Opening **Fabric Deployment** asks the compilers to confirm each route. Those figures then update and the Portfolio banner disappears. Complexity, tool counts, and findings do not change. Expect the confirmed view to be stricter. For the synthetic sample estate, a workflow the support matrix maps to Dataflow Gen2 can be downgraded to **Manual rework**.
+
+   Select **Download Offline Dashboard** to save a ZIP containing a
+   self-contained `index.html`, assessment JSON, workflow CSV, capacity JSON,
+   and usage instructions. Extract the ZIP and open `index.html` in a modern
+   browser. The dashboard makes no network requests and supports portfolio
+   metrics across Overview, Workflows, Migration Waves, and Capacity tabs. It
+   includes leadership readiness, wave sequencing and effort, capacity
+   scenarios, distribution charts, workflow search and filters, per-workflow
+   drill-downs, printing, and PDF export.
+2. Open **Workflows** and select any workflow row to open its six-tab inspection drawer:
+   * **Summary** tab showing complexity score, recommended target, remaining effort, source metadata, and graph evidence
+   * **Source Workflow** tab showing the source graph, tool mapping, dependency references, and material workflow components
+   * **Fabric design** tab showing the recommendation rationale, target architecture interpretation, supporting components, and implementation approach
+   * **Risk assessment** tab showing static review priorities, unmapped tools, and priority findings
+   * **Validation** tab listing functional parity, operational acceptance, and cutover checklists
+   * **Fabric deployment** tab showing readiness metadata, workflow bundle download, and a **Continue to Fabric Deployment** handoff button that opens the dedicated deployment tab with that workflow preselected. The drawer does not preview generated code; generate and inspect code on the **Fabric Deployment** page.
+3. Use **Technical Details** to search across full tool, endpoint, and dependency registers and export formula-safe CSV files.
+
+### Step 3: Model Fabric capacity
+
+Open **Capacity Sizing** (see [Fabric Capacity Planning](capacity-planning.md)) to adjust operational assumptions such as refresh interval, source rows per run, Spark vCores, target utilization, and Spark billing mode (`capacity` vs `autoscale`). The calculator produces **Optimized**, **Balance**, and **Peak** F-SKU recommendations (`F2` through `F8192`) and exports a formula-defused capacity CSV. Capacity follows Fabric routing, so it is computed from the static mapping until the route is confirmed and is recalculated when you confirm it. Your saved inputs are kept.
+
+### Step 4: Generate artifacts and dispatch CI/CD
+
+Opening **Fabric Deployment** starts the Fabric fit stage, once per run, and shows a status line while it runs. A failure appears as an error and is retried the next time you open the tab. The API equivalent is `POST /api/runs/{run_id}/targets/fabric/evaluate`. It is idempotent and reads only the stored static assessment. `GET /api/runs/{run_id}` reports the result as `routing_basis`: `static_mapping` before the fit and `compiler_confirmed` after it. Confirmation is also applied automatically by every route that builds an artifact tree (`generate`, previews, package downloads, publications, and deployment planning) and by `tool generate`, because those use the confirmed target components. Generation jobs and the per-workflow candidates route do not.
+
+Assessment exports (`GET /api/runs/{run_id}/export`) keep their file formats and carry the basis in the `X-Routing-Basis` response header. A confirmed fit is used only while the compiler, rules, and support-table versions that produced it are still installed. After an upgrade the run reads as `static_mapping` again until you open **Fabric Deployment** again. A run assessed by an earlier release is shown as it was stored.
+
+`tool assess` and `etl-assess` are static. The Fabric-native notebook confirms routing during its run.
+
+1. Open the **Fabric Deployment** tab in the sidebar, verify **Microsoft Fabric** is selected in **Target Platform** (roadmap placeholders for Azure Databricks, Azure Synapse Analytics, and Snowflake are shown as disabled), and click **Generate Notebook code**, **Generate Dataflow code**, or **Generate Pipeline code** (`Fabric Notebook`, `Dataflow Gen2`, `Data Pipeline`) to compile the definitions and review the filterable code and scaffold results on the page, or download target/workflow ZIP packages. Generating and downloading compile the workflows now but save nothing to the shared artifacts folder. **Trigger GitHub Actions** and **Trigger GitLab CI** save the files there unless **Isolate local deployment planning** is ticked, and the CLI always does. You can also generate definitions via CLI:
+
+   ```powershell
+   tool generate <completed-run-id> --target all --output generated-fabric-workflows
+   ```
+
+   The local API can also queue one target without writing files. This path is
+   not in the portal and has no CLI command. `target` must be `notebook`,
+   `dataflow`, or `pipeline`. It does not accept `both` or `all`.
+
+   * `POST /api/runs/{run_id}/jobs?target=notebook` returns `202` and a queued job.
+   * `GET /api/runs/{run_id}/jobs` lists that run's jobs. Poll until the job is `completed` or `failed`, then read its `error` field if it failed.
+   * `GET /api/runs/{run_id}/workflows/{index}/candidates?target=notebook` returns one workflow. The index is zero-based in the confirmed snapshot.
+
+   A completed job includes candidates and does not update
+   `generated-fabric-workflows`. `POST /api/runs/{run_id}/generate` remains
+   synchronous: it still returns the candidate list and writes artifacts.
+   One workflow's unexpected fault becomes a `blocked` candidate so the rest of
+   the estate can continue. That fault is not cached. Disk errors, database
+   errors, and contract rejections, including an unsupported source, still fail
+   the request. See [System Architecture](../Architecture/system-architecture.md#local-generation-runtime).
+
+   Portal previews, dry runs, and ZIP downloads use isolated temporary directories
+   and do not update the shared `generated-fabric-workflows` directory. Use the CLI
+   `tool generate` command or the legacy generation API when you need persisted local
+   artifacts. CI dispatch writes to the shared directory by default. To leave it
+   untouched, select **Isolate local deployment planning** or set
+   `isolate_local_artifacts` to `true` in the deployment request. This uses
+   temporary local files only; the remote CI repository must already contain the
+   intended artifacts. It does not establish remote artifact provenance.
+   Generation fails if two candidates for
+   the same target would receive the same Fabric logical ID; this prevents publishing
+   colliding definitions until a compatible identity migration is available. Current
+   logical IDs also change when source content changes, so do not assume regenerated
+   artifacts will update an existing Fabric item.
+
+   To create and verify a separate run-scoped local publication, use:
+
+   ```powershell
+   tool publish <completed-run-id>
+   tool verify-publication <completed-run-id> <publication-digest>
+   ```
+
+   The publication is stored under the local `.accelerator/publications` directory.
+   Its manifest records file hashes; verification rejects modified or extra files.
+   Treat it as read-only. To use it for dispatch, copy the exact publication into
+   `published-fabric-workflows/<completed-run-id>/<publication-digest>` in the
+   remote repository, and select that digest and the full expected commit SHA in
+   the deployment form. The publication is not uploaded automatically. Follow
+   your data-handling policies when placing artifacts in a repository.
+   The local API also supports `POST /api/runs/{run_id}/publications`,
+   `GET /api/runs/{run_id}/publications/{digest}`, and
+   `GET /api/runs/{run_id}/publications/{digest}/download`. The download contains
+   only manifest-listed files and is rejected if the publication has changed.
+
+2. Inspect `generated-fabric-workflows/<platform>/<workflow>/`:
+   * Deployable items include `*-create-item.json` envelopes, decoded definitions (`dataflow-mashup.pq`, `notebook-content.ipynb`, `pipeline-content.json`), `.platform` metadata, and `deployment-bundle.json`.
+   * Unsupported or macro-dependent items emit `*-diagnostics.json` scaffolds only and are never given runnable create-item envelopes.
+3. Run a pre-deployment dry run, then dispatch your allowlisted GitHub Actions or GitLab CI workflow (configured with Microsoft Entra OIDC federation per [Fabric CI/CD Setup](fabric-ci-cd-setup.md)) to publish to your Fabric `dev` workspace.
+   You can optionally request a check against a full lowercase commit SHA. This
+   check only runs when the selected ref contains the updated trusted CI
+   definition and verification script; older GitLab definitions can ignore the
+   request. With a publication digest, the local service compares regenerated
+   artifacts to the publication and the updated CI definition checks the exact
+   manifest and files. These checks depend on a trusted CI definition, checkout,
+   and runner; dispatch alone is not proof of remote provenance. See
+   [Fabric CI/CD Setup](fabric-ci-cd-setup.md#optional-publication-backed-dispatch).
+
+## Workflow 3: Modular Python packages and stateless CLIs
+
+Use the standalone libraries when embedding assessment or Fabric compilation into CI pipelines, notebooks, or custom automation without FastAPI or SQLite:
+
+* `etl-migration-core`: Canonical `EtlPackage` IR, discovery, source adapters, and `TargetPlatformRegistry`
+* `etl-portfolio-assessment`: Target-neutral portfolio assessment and `etl-assess` CLI
+* `etl-target-fabric`: Microsoft Fabric evaluator, F-SKU capacity model, M/PySpark/Pipeline compilers, and `etl-fabric` CLI
+
+```powershell
+etl-assess preview .\alteryx-workflows
+etl-assess assess .\alteryx-workflows
+etl-assess evidence .\alteryx-workflows
+
+etl-fabric evaluate .\alteryx-workflows\sample_alteryx_workflow.yxmd
+etl-fabric compile .\alteryx-workflows\sample_alteryx_workflow.yxmd --target dataflow
+```
+
+The main CLI also offers `tool assess-neutral <path>` for a target-neutral
+assessment using registered source plugins. It returns a nonzero exit code when no
+supported workflows are found or parsing fails. The existing `tool assess` command
+continues to return the Fabric-specific assessment.
+
+To inspect registered target platforms and roadmap placeholder status from the main CLI or API:
+
+```powershell
+tool targets
+tool plugins
+```
+
+`tool plugins` (and `GET /api/plugins`) also reports every installed plugin as `loaded`,
+`failed`, or `skipped` with the reason, so a plugin that fails to load can
+be diagnosed without reading logs. See [Troubleshooting](troubleshooting.md#plugins-faults-and-local-state).
+
+See [Building Source and Target Plugins](building-plugins.md) to register custom source adapters or implement providers for Databricks, Azure Synapse, or Snowflake, and [PyPI Packages and Publishing Guide](pypi-packages.md) for installation, build, and release instructions.
+
+## Understanding waves, targets, and diagnostics
+
+### Migration wave normalization (Wave 1 to Wave 4)
+
+| Engine wave | Normalized UI and BI label | Typical profile |
+| :--- | :--- | :--- |
+| `Wave 1` | `Wave 1` | Low complexity, single native target (Dataflow Gen2 or Notebook) |
+| `Pilot` | `Wave 2` | High complexity or mixed multi-item Fabric solution requiring early pilot validation |
+| `Wave 2` | `Wave 3` | Medium complexity standard migration workload |
+| `Redesign` | `Wave 4` | Unsupported tools, macros, or cyclic/control tasks requiring manual redesign |
+
+### Validation states
+
+| State | Meaning | Deployable envelope emitted |
+| :--- | :--- | :--- |
+| `generated_unvalidated` | Compiler produced structurally valid Fabric definition; bindings and semantic parity still require review | Yes (`*-create-item.json`) |
+| `scaffold` | One or more operations, macros, or graph shapes fall outside verified compiler coverage | No (`*-diagnostics.json` only) |
+| `blocked` | Input validation, a dependency constraint, or an isolated unexpected generation fault prevents a deployable definition. Disk, database, and contract errors fail the request instead. | No (`*-diagnostics.json` only) |
+
+## Security and operational guardrails
+
+* Keep customer workflows, tenant GUIDs, credentials, and personal paths out of source control and issue trackers.
+* Bind `tool serve` strictly to `127.0.0.1`; remote exposure is blocked by host and CSRF origin checks.
+* Replace all unresolved `source_paths`, connection bindings, and `transform_bindings` placeholders before promoting generated items beyond Development.
+* Review [Troubleshooting](troubleshooting.md) if Power BI Direct Lake refreshes lag, notebook schemas need initialization, or workspace deployment encounters permission errors.

@@ -1,0 +1,102 @@
+[build-system]
+requires = ["hatchling", "tomlkit==0.15.2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fabric-etl-migration-accelerator"
+version = "1.0.0"
+description = "Deterministic assessment, compiler-grounded code generation, and CI deployment for migrating Alteryx and Informatica estates to Microsoft Fabric"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "etl-migration-core>=1.0.0,<2",
+  "etl-portfolio-assessment>=1.0.0,<2",
+  "etl-target-fabric>=1.0.0,<2",
+  "fastapi>=0.120,<1",
+  "jinja2>=3.1,<4",
+  "pyjwt[crypto]>=2.10,<3",
+  "pydantic>=2.12,<3",
+  "python-dotenv>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
+  "typer>=0.20,<1",
+  "uvicorn>=0.38,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx>=0.28,<1",
+  "mypy>=1.18,<2",
+  "pytest>=9.0.3,<10",
+  "pytest-cov>=7,<8",
+  "ruff>=0.14,<1",
+  "types-defusedxml>=0.7,<1",
+]
+desktop = [
+  "pywebview>=6.2.1,<7",
+]
+desktop-build = [
+  "pyinstaller>=6.22.3,<7",
+  "pywebview>=6.2.1,<7",
+]
+
+[project.scripts]
+tool = "accelerator.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/accelerator"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config --cov=accelerator --cov=etl_migration_core --cov=etl_portfolio_assessment --cov=etl_target_fabric --cov-report=term-missing"
+testpaths = [
+  "tests",
+  "packages/etl-migration-core/tests",
+  "packages/etl-portfolio-assessment/tests",
+  "packages/etl-target-fabric/tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["generated-fabric-workflows"]
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "I", "UP", "B", "SIM", "RUF",
+  "ASYNC", "BLE", "DTZ", "ERA", "G", "LOG", "PLE", "PTH", "RET",
+  "S102", "S301", "S307", "S506", "S602", "S604", "S605",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S102"]
+"packages/*/tests/**" = ["S102"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+  "accelerator",
+  "etl_migration_core",
+  "etl_portfolio_assessment",
+  "etl_target_fabric",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = [
+  "src",
+  "packages",
+  "tests",
+  "examples/plugins/synthetic-ssis/src",
+  "examples/plugins/synthetic-databricks/src",
+]
+mypy_path = [
+  "src",
+  "packages/etl-migration-core/src",
+  "packages/etl-portfolio-assessment/src",
+  "packages/etl-target-fabric/src",
+  "examples/plugins/synthetic-ssis/src",
+  "examples/plugins/synthetic-databricks/src",
+]
+
+[[tool.mypy.overrides]]
+module = ["webview", "webview.*"]
+ignore_missing_imports = true

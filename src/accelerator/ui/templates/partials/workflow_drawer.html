@@ -1,0 +1,337 @@
+<div class="drawer-backdrop" onclick="if (event.target === this) closeDrawer();">
+  <div class="drawer-panel" role="dialog" aria-modal="true" aria-label="Workflow inspection drawer">
+    <div class="page-header" style="margin-bottom: 12px;">
+      <div>
+        <h2 style="margin: 0; font-size: 18px;">{{ wf.path }}</h2>
+        <p style="margin: 2px 0 0; color: var(--muted);">
+          {{ wf.source_product }} · {{ wf.complexity_band }} ({{ wf.complexity_score }}) ·
+          {{ wf.migration_wave | wave_label }} · {{ wf.recommended_target }}
+        </p>
+      </div>
+      <button type="button" class="btn btn-sm" onclick="closeDrawer()">Close ✕</button>
+    </div>
+
+    <div class="tabs" role="tablist">
+      {% for key, label in [
+        ('summary', 'Summary'),
+        ('source', 'Source Workflow'),
+        ('fabric', 'Fabric Design'),
+        ('risk', 'Risk Assessment'),
+        ('validation', 'Validation'),
+        ('deployment', 'Fabric Deployment')
+      ] %}
+      <button type="button" class="tab-btn {% if tab == key %}active{% endif %}" role="tab"
+        hx-get="/ui/runs/{{ run.id }}/workflows/{{ workflow_index }}/drawer?tab={{ key }}"
+        hx-target="#drawer-host" hx-swap="innerHTML">
+        {{ label }}
+      </button>
+      {% endfor %}
+    </div>
+
+    {% if tab == 'summary' %}
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-label">Tools</div><div class="kpi-value">{{ wf.tool_count }}</div></div>
+      <div class="kpi"><div class="kpi-label">Connections</div><div class="kpi-value">{{ wf.connection_count }}</div></div>
+      <div class="kpi"><div class="kpi-label">Effort</div><div class="kpi-value">{{ wf.estimated_effort_days }} d</div></div>
+      <div class="kpi"><div class="kpi-label">Unsupported</div><div class="kpi-value">{{ wf.unsupported_tools | length }}</div></div>
+    </div>
+    <div class="card">
+      <h3>Recommendation Rationale</h3>
+      <p style="margin: 0;">{{ wf.recommendation_reason }}</p>
+      {% if wf.target_components %}
+      <div class="btn-row" style="margin-top: 10px;">
+        {% for comp in wf.target_components %}
+        <span class="badge badge-info">{{ comp }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>Tool Inventory</h3>
+      <table>
+        <thead><tr><th>Tool</th><th>Count</th><th>Support</th></tr></thead>
+        <tbody>
+          {% for t in wf.tools %}
+          <tr>
+            <td>{{ t.name }}</td>
+            <td>{{ t.count }}</td>
+            <td>
+              <span class="badge {% if t.support in ('supported', 'native') %}badge-ok{% elif t.support == 'partial' %}badge-warn{% else %}badge-err{% endif %}">
+                {{ t.support }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% elif tab == 'source' %}
+    <div class="card">
+      <h3>Source Workflow Graph ({{ evidence.node_count if evidence else 0 }} tools · {{ evidence.edge_count if evidence else 0 }} connections)</h3>
+      <p style="margin: 0 0 8px; color: var(--muted); font-size: 12px;">
+        {{ 'Source canvas coordinates (de-overlapped)' if (evidence and evidence.layout_source == 'source') else 'Derived topological layout; source coordinates unavailable' }}
+        · Depth: <strong>{{ shape.depth }}</strong> · Branches: <strong>{{ shape.branches }}</strong> · Containers: <strong>{{ shape.containers }}</strong>
+      </p>
+      <div class="dag-legend">
+        <span class="badge badge-ok">Dataflow Gen2</span>
+        <span class="badge badge-info">Fabric Notebook</span>
+        <span class="badge" style="background:#f5f3ff;color:#6d28d9;">Fabric Pipeline</span>
+        <span class="badge badge-err">Manual Redesign</span>
+        <span class="badge">Neutral / Container</span>
+      </div>
+      <div class="dag-toolbar">
+        <input id="dag-search-input" type="search" placeholder="Find tool ID, name, or mapping…"
+          onkeydown="if (event.key === 'Enter') { event.preventDefault(); findDagNode(); }" />
+        <button type="button" class="btn btn-sm" onclick="findDagNode()">Find / Next</button>
+        <button type="button" class="btn btn-sm" onclick="dagZoomBy(-0.2)" aria-label="Zoom out">−</button>
+        <button type="button" class="btn btn-sm" onclick="dagZoomBy(0.2)" aria-label="Zoom in">+</button>
+        <button type="button" class="btn btn-sm" onclick="dagZoomReset()">100%</button>
+        <button type="button" class="btn btn-sm" onclick="dagZoomFit()">Fit</button>
+        <span id="dag-zoom-label" style="font-size:12px;color:var(--muted);">100%</span>
+        <span id="dag-search-status" style="font-size:12px;color:var(--muted);"></span>
+      </div>
+      <div class="dag-wrap" id="source-dag-viewport">{{ svg_markup | safe }}</div>
+      <div class="dag-inspector" id="dag-inspector">
+        Click any tool node in the diagram above to inspect its Tool ID, plugin, Fabric target mapping, expressions, and issues.
+      </div>
+      {% if evidence and evidence.truncated %}
+      <p style="color: var(--muted); font-size: 12px; margin-top: 8px;">Graph view is capped at 500 tools and 1,000 connections; counts reflect the full workflow.</p>
+      {% endif %}
+    </div>
+
+    {% if executable_stages %}
+    <div class="card">
+      <h3>Migration Interpretation Stages</h3>
+      <div class="arch-flow">
+        {% for stage in executable_stages[:8] %}
+        <div class="arch-node {% if stage.support == 'manual' %}primary{% endif %}">
+          <span>Tool #{{ stage.id }}</span>
+          <strong>{{ stage.name }}</strong>
+          <small style="color:var(--muted);">{{ stage.target }}</small>
+        </div>
+        {% endfor %}
+      </div>
+      <p style="margin:0;font-size:12px;color:var(--muted);">
+        {% if executable_stages | length > 8 %}Showing first 8 of {{ executable_stages | length }} executable stages.{% else %}Interpretation of visible source tools; not an alternative executable graph.{% endif %}
+      </p>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <h3>Tool Mapping Breakdown</h3>
+      <div class="bar-list">
+        {% for label, count, color in mapping_bars %}
+        <div class="bar-row">
+          <div>{{ label }}</div>
+          <div class="bar-track"><div class="bar-fill {{ color }}" style="width: {{ ((count / wf.tool_count) * 100) | round(1) if wf.tool_count else 0 }}%;"></div></div>
+          <strong>{{ count }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if evidence and evidence.nodes %}
+    <details class="card">
+      <summary style="cursor:pointer;font-weight:600;">Text Alternative: Source Tool Register ({{ evidence.nodes | length }})</summary>
+      <ul style="font-size:12.5px;margin-top:8px;">
+        {% for n in evidence.nodes[:100] %}
+        <li>Tool #{{ n.id }}: <strong>{{ n.name }}</strong>{% if n.label and n.label != n.name %} ({{ n.label }}){% endif %} — <code>{{ n.support }}</code></li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+
+    {% elif tab == 'fabric' %}
+    <div class="card">
+      <h3>Recommended Fabric Design</h3>
+      <p style="margin: 0;">{{ wf.recommendation_reason }}</p>
+    </div>
+
+    <div class="card">
+      <h3>Target Architecture Interpretation</h3>
+      <div class="arch-flow">
+        <div class="arch-node">
+          <span>1. Source</span>
+          <strong>Files &amp; Connections</strong>
+          <small style="color:var(--muted);">{{ wf.data_sources | length }} endpoint(s)</small>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node">
+          <span>2. Landing</span>
+          <strong>OneLake Lakehouse</strong>
+          <small style="color:var(--muted);">Staging / Delta</small>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node primary">
+          <span>3. Primary Compute</span>
+          <strong>{{ wf.recommended_target }}</strong>
+          <small style="color:var(--muted);">{{ wf.migration_wave }}</small>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node">
+          <span>4. Orchestration</span>
+          <strong>Fabric Data Pipeline</strong>
+          <small style="color:var(--muted);">Reviewed schedule</small>
+        </div>
+      </div>
+      {% if wf.target_components %}
+      <div class="btn-row" style="margin-top:10px;">
+        {% for comp in wf.target_components %}
+        <span class="badge badge-info">{{ comp }}</span>
+        {% endfor %}
+        {% if wf.data_sources %}<span class="badge">Fabric Connections</span><span class="badge">OneLake</span>{% endif %}
+        {% if wf.dependencies %}<span class="badge badge-warn">Reusable Components</span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h3>Tool-to-Fabric Mapping Strategy</h3>
+      <table>
+        <thead><tr><th>Source Tool</th><th>Count</th><th>Fabric Target</th><th>Action</th></tr></thead>
+        <tbody>
+          {% for row in design_mappings %}
+          <tr>
+            <td><strong>{{ row.name }}</strong></td>
+            <td>{{ row.count }}</td>
+            <td><span class="badge {% if row.support in ('dataflow', 'pipeline') %}badge-ok{% elif row.support == 'notebook' %}badge-info{% elif row.support == 'manual' %}badge-err{% endif %}">{{ row.target }}</span></td>
+            <td>{{ row.mapping }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Implementation Approach</h3>
+      <ol style="margin:0;padding-left:18px;font-size:13px;">
+        <li>Resolve source schemas, external dependencies ({{ wf.dependencies | length }}), and Fabric Connections.</li>
+        <li>Compile and review only explicitly supported transformations in <strong>{{ wf.recommended_target }}</strong>.</li>
+        <li>Validate row-level semantic parity, error handling, and operational controls before cutover.</li>
+      </ol>
+      <p style="margin:10px 0 0;font-size:12px;color:var(--muted);">
+        This is a static target design interpretation, not a deployed architecture or automatic conversion.
+      </p>
+    </div>
+
+    {% elif tab == 'risk' %}
+    <div class="card">
+      <h3>Static Risk Profile</h3>
+      <p style="margin:0 0 10px;color:var(--muted);font-size:12.5px;">Static review priorities; no runtime or credential risk rating is inferred.</p>
+      <div class="fact-grid">
+        <div class="fact"><span>Performance Review</span><strong>{{ risk.performance }}</strong></div>
+        <div class="fact"><span>Operational Review</span><strong>{{ risk.operational }}</strong></div>
+        <div class="fact"><span>Compatibility Review</span><strong>{{ risk.compatibility }}</strong></div>
+        <div class="fact"><span>Credential Pattern</span><strong>No static rating</strong></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Assessment Dimensions</h3>
+      <div class="focus-list">
+        <div class="focus-item">
+          <div><strong>Performance review · {{ risk.performance }}</strong><span>{{ wf.tool_count }} tools, graph depth {{ shape.depth }}, and {{ shape.branches }} branch(es) require validation with representative production volumes.</span></div>
+        </div>
+        <div class="focus-item">
+          <div><strong>Operational review · {{ risk.operational }}</strong><span>{{ wf.dependencies | length }} dependency reference(s) and {{ shape.containers }} container(s) require restart, scheduling, and monitoring validation.</span></div>
+        </div>
+        <div class="focus-item">
+          <div><strong>Compatibility review · {{ risk.compatibility }}</strong><span>{{ wf.recommendation_reason }}</span></div>
+        </div>
+        <div class="focus-item">
+          <div><strong>Credential patterns · No static rating</strong><span>Common secret patterns are redacted in evidence; perform an independent secret &amp; connection audit.</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Unsupported Tools &amp; Findings</h3>
+      {% if wf.unsupported_tools or (evidence and evidence.findings) %}
+      <ul>
+        {% for u in wf.unsupported_tools %}
+        <li><strong>{{ u }}</strong> — explicit redesign required</li>
+        {% endfor %}
+        {% if evidence %}
+        {% for finding in evidence.findings %}
+        <li>{{ finding }}</li>
+        {% endfor %}
+        {% endif %}
+      </ul>
+      {% else %}
+      <div class="empty-inline">No unsupported tools or parser findings detected.</div>
+      {% endif %}
+    </div>
+    <div class="card">
+      <h3>External Dependencies ({{ wf.dependencies | length }})</h3>
+      {% if wf.dependencies %}
+      <ul>
+        {% for dep in wf.dependencies %}
+        <li><code>{{ dep }}</code></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <div class="empty-inline">No macro or external file dependencies detected.</div>
+      {% endif %}
+    </div>
+    <p style="font-size:12px;color:var(--muted);">Unknown is not Low risk. Static priorities are not measured operational outcomes.</p>
+
+    {% elif tab == 'validation' %}
+    <div class="card">
+      <h3>1. Functional Parity</h3>
+      <ul>
+        <li>Compare schemas, data types, row counts, and record-level reconciliation against legacy outputs.</li>
+        <li>Test nulls, expressions, joins, and rejected-row behavior using representative edge cases.</li>
+        <li>Validate every parameter combination and conditional route (Registry v{{ wf.registry_version }}, Rules v{{ wf.rules_version }}).</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>2. Operational Acceptance</h3>
+      <ul>
+        <li>Confirm Entra identities, Fabric Connections, permissions, and workspace settings.</li>
+        <li>Test retries, restartability, idempotency, structured logging, and failure alerting.</li>
+        <li>Measure runtime and CU consumption against Capacity Planning estimates.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>3. Cutover &amp; Rollback</h3>
+      <ul>
+        <li>Agree acceptance thresholds and business owner sign-off before promotion.</li>
+        <li>Run legacy source and Microsoft Fabric target in parallel where authorized.</li>
+        <li>Retain a tested rollback route until parity is accepted.</li>
+      </ul>
+    </div>
+    {% if wf.data_sources %}
+    <div class="card">
+      <h3>Referenced Endpoints / Connections ({{ wf.data_sources | length }})</h3>
+      <ul>
+        {% for ds in wf.data_sources[:40] %}
+        <li><code>{{ ds }}</code></li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+
+    {% elif tab == 'deployment' %}
+    {% if wf.recommended_target == 'Manual rework' %}
+    <div class="banner banner-err">
+      <span><strong>Manual rework required.</strong> This workflow has no deployable native definition; inspect diagnostics in Fabric Deployment.</span>
+    </div>
+    {% endif %}
+    <div class="card">
+      <h3>Deployment Readiness</h3>
+      <div class="fact-grid" style="margin-bottom:12px;">
+        <div class="fact"><span>Recommended Target</span><strong>{{ wf.recommended_target }}</strong></div>
+        <div class="fact"><span>Migration Wave</span><strong>{{ wf.migration_wave | wave_label }}</strong></div>
+        <div class="fact"><span>Remaining Effort</span><strong>{{ wf.estimated_effort_days }} days</strong></div>
+        <div class="fact"><span>Status</span><strong>{{ 'Manual redesign required' if wf.recommended_target == 'Manual rework' else 'Eligible for Fabric codegen & CI dispatch' }}</strong></div>
+      </div>
+      <p style="color:var(--muted);">Open <strong>Fabric Deployment</strong> with this workflow preselected to confirm compiler routing, preview generated M / PySpark / Pipeline code, download ZIP packages, or run dry-run / CI dispatch.</p>
+      <button type="button" class="btn btn-primary"
+        hx-get="/ui/deployment?run_id={{ run.id }}&workflow={{ wf.path | urlencode }}"
+        hx-target="#stage" hx-swap="innerHTML"
+        hx-on::after-request="closeDrawer(); setActiveNav('deployment');">
+        Continue to Fabric Deployment →
+      </button>
+    </div>
+    {% endif %}
+  </div>
+</div>

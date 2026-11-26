@@ -1,0 +1,801 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+  <title>Offline Portfolio Assessment</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6fb;
+      --surface: #ffffff;
+      --ink: #172033;
+      --muted: #5f6b7a;
+      --brand: #5b5fc7;
+      --brand-soft: #e9e9ff;
+      --border: #d9deea;
+      --ok: #16835d;
+      --warn: #a15c00;
+      --risk: #c4314b;
+      --shadow: 0 8px 24px rgb(23 32 51 / 8%);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.45 Aptos, "Segoe UI", Arial, sans-serif;
+    }
+    header {
+      background: linear-gradient(120deg, #24265f, #5b5fc7);
+      color: white;
+      padding: 28px max(24px, calc((100vw - 1280px) / 2));
+    }
+    header h1 { margin: 0; font-size: 28px; letter-spacing: -.02em; }
+    header p { margin: 6px 0 0; color: #e7e8ff; }
+    .header-row { display: flex; justify-content: space-between; gap: 20px; align-items: start; }
+    .offline-badge {
+      border: 1px solid rgb(255 255 255 / 55%);
+      border-radius: 999px;
+      padding: 6px 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    [hidden] { display: none !important; }
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 18px;
+      padding: 6px;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .tab {
+      flex: 0 0 auto;
+      width: auto;
+      border-color: transparent;
+      background: transparent;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .tab[aria-selected="true"] {
+      background: var(--brand);
+      color: white;
+    }
+    .tab-panel:focus { outline: none; }
+    .meta, .controls, .panel, .kpi {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+    .meta div { padding: 14px 16px; background: var(--surface); }
+    .meta span, .kpi span { display: block; color: var(--muted); font-size: 12px; }
+    .meta strong { display: block; margin-top: 3px; word-break: break-word; }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .kpi { padding: 16px; }
+    .kpi strong { display: block; margin-top: 5px; font-size: 25px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .two-column {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .panel { padding: 18px; min-width: 0; }
+    .panel h2 { margin: 0 0 14px; font-size: 16px; }
+    .panel h3 { margin: 18px 0 8px; font-size: 14px; }
+    .panel p { color: var(--muted); }
+    .readiness {
+      display: inline-block;
+      margin-bottom: 8px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-weight: 700;
+    }
+    .readiness.ok { background: #dff6ed; color: var(--ok); }
+    .readiness.warn { background: #fff1d6; color: var(--warn); }
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+    .fact { border-left: 3px solid var(--brand); padding: 4px 8px; }
+    .fact span { display: block; color: var(--muted); font-size: 11px; }
+    .fact strong { display: block; margin-top: 2px; font-size: 17px; }
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(110px, 1fr) 2fr 38px;
+      gap: 9px;
+      align-items: center;
+      margin: 10px 0;
+    }
+    .bar-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { height: 9px; background: #edf0f6; border-radius: 999px; overflow: hidden; }
+    .bar-fill { height: 100%; background: var(--brand); border-radius: inherit; }
+    .bar-count { text-align: right; font-weight: 700; }
+    .controls {
+      display: grid;
+      grid-template-columns: 2fr repeat(3, minmax(130px, 1fr)) auto auto;
+      gap: 10px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    input, select, button {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: white;
+      color: var(--ink);
+      padding: 9px 10px;
+      font: inherit;
+    }
+    button { width: auto; cursor: pointer; font-weight: 700; }
+    input:focus, select:focus, button:focus {
+      outline: 3px solid var(--brand-soft);
+      border-color: var(--brand);
+    }
+    .table-panel { padding: 0; overflow: hidden; }
+    .table-heading {
+      display: flex;
+      justify-content: space-between;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .table-heading h2 { margin: 0; font-size: 16px; }
+    .table-wrap { overflow: auto; max-height: 640px; }
+    table { width: 100%; border-collapse: collapse; }
+    .table-panel table { min-width: 980px; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f7f8fb;
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+    .table-panel tbody tr { cursor: pointer; }
+    .table-panel tbody tr:hover { background: #fafaff; }
+    .table-panel tbody tr:focus {
+      outline: 3px solid var(--brand-soft);
+      outline-offset: -3px;
+    }
+    .table-panel tbody tr.selected {
+      background: var(--brand-soft);
+      box-shadow: inset 4px 0 0 var(--brand);
+    }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: #34389d;
+      padding: 3px 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .risk { color: var(--risk); font-weight: 700; }
+    .detail-button {
+      width: auto;
+      padding: 5px 9px;
+      color: #34389d;
+      background: var(--brand-soft);
+      border-color: transparent;
+    }
+    .details-panel { margin-top: 14px; }
+    .details-heading {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+    .details-heading h2 { margin-bottom: 4px; word-break: break-word; }
+    .details-heading p { margin: 0; }
+    .detail-columns {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+    .detail-list { margin: 8px 0 0; padding-left: 20px; color: var(--muted); }
+    .detail-list li { margin: 5px 0; overflow-wrap: anywhere; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chip {
+      border-radius: 999px;
+      background: var(--brand-soft);
+      color: #34389d;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .version-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .wave-cards {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .wave-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      background: #fafaff;
+    }
+    .wave-card h3 { margin: 0 0 4px; }
+    .wave-card p { margin: 0; }
+    .issues { margin-bottom: 18px; }
+    .issues ul { margin: 8px 0 0; padding-left: 20px; color: var(--risk); }
+    .empty { color: var(--muted); text-align: center; padding: 32px; }
+    footer { color: var(--muted); text-align: center; padding: 20px; font-size: 12px; }
+    noscript { display: block; margin: 20px; color: var(--risk); }
+    @media (max-width: 900px) {
+      .kpis, .grid, .facts, .detail-columns, .wave-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .two-column { grid-template-columns: 1fr; }
+      .controls { grid-template-columns: 1fr 1fr; }
+      .meta { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      .kpis, .grid, .controls, .facts, .detail-columns, .version-grid, .wave-cards { grid-template-columns: 1fr; }
+      .header-row { display: block; }
+      .offline-badge { display: inline-block; margin-top: 14px; }
+    }
+    @media print {
+      body { background: white; }
+      header { background: #24265f !important; print-color-adjust: exact; }
+      main { max-width: none; padding: 12px; }
+      .controls, button, .tabs { display: none; }
+      .tab-panel[hidden] { display: block !important; }
+      .tab-panel { margin-bottom: 20px; }
+      .panel, .kpi, .meta { box-shadow: none; break-inside: avoid; }
+      .table-wrap { max-height: none; overflow: visible; }
+      th { position: static; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <div>
+        <h1>Portfolio Assessment Dashboard</h1>
+        <p>Microsoft Fabric ETL Migration Accelerator</p>
+      </div>
+      <span class="offline-badge">Offline · Self-contained</span>
+    </div>
+  </header>
+  <main>
+    <nav class="tabs" role="tablist" aria-label="Offline dashboard sections">
+      <button id="tab-overview-button" class="tab" type="button" role="tab"
+        aria-selected="true" aria-controls="tab-overview" data-tab="overview">Overview</button>
+      <button id="tab-workflows-button" class="tab" type="button" role="tab"
+        aria-selected="false" aria-controls="tab-workflows" data-tab="workflows">Workflows</button>
+      <button id="tab-waves-button" class="tab" type="button" role="tab"
+        aria-selected="false" aria-controls="tab-waves" data-tab="waves">Migration Waves</button>
+      <button id="tab-capacity-button" class="tab" type="button" role="tab"
+        aria-selected="false" aria-controls="tab-capacity" data-tab="capacity">Capacity</button>
+    </nav>
+
+    <section id="tab-overview" class="tab-panel" role="tabpanel"
+      aria-labelledby="tab-overview-button" tabindex="0">
+    <section class="meta" aria-label="Assessment metadata">
+      <div><span>Run ID</span><strong id="run-id"></strong></div>
+      <div><span>Routing basis</span><strong id="routing-basis"></strong></div>
+      <div><span>Report scope</span><strong id="report-scope"></strong></div>
+    </section>
+
+    <section class="kpis" aria-label="Portfolio metrics">
+      <div class="kpi"><span>Workflows</span><strong id="kpi-workflows">0</strong></div>
+      <div class="kpi"><span>Native-ready</span><strong id="kpi-native">0</strong></div>
+      <div class="kpi"><span>Manual rework</span><strong id="kpi-manual">0</strong></div>
+      <div class="kpi"><span>Remaining effort</span><strong id="kpi-effort">0 d</strong></div>
+      <div class="kpi"><span>Projected capacity</span><strong id="kpi-capacity">N/A</strong></div>
+    </section>
+
+    <section class="panel" aria-label="Portfolio readiness">
+        <h2>Leadership readiness</h2>
+        <strong id="readiness" class="readiness">Assessing</strong>
+        <p id="readiness-narrative"></p>
+        <div class="facts">
+          <div class="fact"><span>Total tools</span><strong id="fact-tools">0</strong></div>
+          <div class="fact"><span>Connections</span><strong id="fact-connections">0</strong></div>
+          <div class="fact"><span>Dependencies</span><strong id="fact-dependencies">0</strong></div>
+          <div class="fact"><span>Data sources</span><strong id="fact-data-sources">0</strong></div>
+        </div>
+    </section>
+
+    <section class="grid" aria-label="Portfolio distributions">
+      <div class="panel"><h2>Recommended targets</h2><div id="target-bars"></div></div>
+      <div class="panel"><h2>Complexity bands</h2><div id="complexity-bars"></div></div>
+      <div class="panel"><h2>Migration waves</h2><div id="wave-bars"></div></div>
+    </section>
+    </section>
+
+    <section id="tab-workflows" class="tab-panel" role="tabpanel"
+      aria-labelledby="tab-workflows-button" tabindex="0" hidden>
+    <section class="controls" aria-label="Workflow filters">
+      <input id="search" type="search" placeholder="Search workflows or source products" aria-label="Search workflows">
+      <select id="target-filter" aria-label="Filter by target"><option value="">All targets</option></select>
+      <select id="complexity-filter" aria-label="Filter by complexity"><option value="">All complexity</option></select>
+      <select id="wave-filter" aria-label="Filter by wave"><option value="">All waves</option></select>
+      <button id="clear-filters" type="button">Clear filters</button>
+      <button id="print" type="button">Print / Save PDF</button>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="table-heading">
+        <h2>Workflow portfolio</h2>
+        <strong id="visible-count">0 workflows</strong>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Workflow</th>
+              <th>Source</th>
+              <th>Complexity</th>
+              <th>Target</th>
+              <th>Wave</th>
+              <th>Effort</th>
+              <th>Tools</th>
+              <th>Dependencies</th>
+              <th>Manual tools</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="workflow-rows"></tbody>
+        </table>
+        <div id="empty" class="empty" hidden>No workflows match the selected filters.</div>
+      </div>
+    </section>
+
+    <section id="workflow-details" class="panel details-panel" hidden aria-live="polite">
+      <div class="details-heading">
+        <div>
+          <h2 id="detail-path">Workflow details</h2>
+          <p id="detail-source"></p>
+        </div>
+        <span id="detail-complexity" class="pill"></span>
+      </div>
+      <h3>Fabric recommendation</h3>
+      <p id="detail-recommendation"></p>
+      <div id="detail-targets" class="chips"></div>
+      <div class="detail-columns">
+        <div><h3>Tool inventory</h3><ul id="detail-tools" class="detail-list"></ul></div>
+        <div><h3>Dependencies</h3><ul id="detail-dependencies" class="detail-list"></ul></div>
+        <div><h3>Data sources</h3><ul id="detail-data-sources" class="detail-list"></ul></div>
+      </div>
+      <div class="detail-columns">
+        <div><h3>Unsupported tools</h3><ul id="detail-unsupported" class="detail-list"></ul></div>
+        <div><h3>Identity</h3><ul id="detail-identity" class="detail-list"></ul></div>
+        <div><h3>Scope</h3><ul id="detail-scope" class="detail-list"></ul></div>
+      </div>
+      <div class="version-grid">
+        <span id="detail-registry-version"></span>
+        <span id="detail-rules-version"></span>
+        <span id="detail-graph-version"></span>
+      </div>
+    </section>
+    </section>
+
+    <section id="tab-waves" class="tab-panel" role="tabpanel"
+      aria-labelledby="tab-waves-button" tabindex="0" hidden>
+      <section class="panel">
+        <h2>Migration wave plan</h2>
+        <p>Review delivery sequence, remaining effort, target mix, complexity, and included workflows by migration wave.</p>
+        <div class="facts">
+          <div class="fact"><span>Active waves</span><strong id="wave-count">0</strong></div>
+          <div class="fact"><span>Total workflows</span><strong id="wave-workflow-count">0</strong></div>
+          <div class="fact"><span>Total effort</span><strong id="wave-effort">0 d</strong></div>
+          <div class="fact"><span>Manual rework</span><strong id="wave-manual-count">0</strong></div>
+        </div>
+        <h3>Wave summary</h3>
+        <table>
+          <thead>
+            <tr><th>Wave</th><th>Workflows</th><th>Effort</th><th>Target mix</th><th>Complexity mix</th></tr>
+          </thead>
+          <tbody id="wave-summary-rows"></tbody>
+        </table>
+        <div id="wave-cards" class="wave-cards"></div>
+      </section>
+    </section>
+
+    <section id="tab-capacity" class="tab-panel" role="tabpanel"
+      aria-labelledby="tab-capacity-button" tabindex="0" hidden>
+      <article id="capacity-panel" class="panel">
+        <h2>Capacity planning</h2>
+        <p>Review portfolio demand, coverage, recommended F-SKUs, and the assumptions that shape this estimate.</p>
+        <div class="facts">
+          <div class="fact"><span>Coverage</span><strong id="capacity-coverage">N/A</strong></div>
+          <div class="fact"><span>Monthly demand</span><strong id="capacity-monthly">N/A</strong></div>
+          <div class="fact"><span>Modeled</span><strong id="capacity-modeled">N/A</strong></div>
+          <div class="fact"><span>Unconfirmed</span><strong id="capacity-unconfirmed">N/A</strong></div>
+        </div>
+        <h3>Capacity scenarios</h3>
+        <table>
+          <thead><tr><th>Scenario</th><th>Required CU</th><th>Recommended SKU</th></tr></thead>
+          <tbody id="capacity-scenarios"></tbody>
+        </table>
+        <h3>Key assumptions</h3>
+        <ul id="capacity-assumptions" class="detail-list"></ul>
+      </article>
+    </section>
+
+  </main>
+  <footer>Generated from a static assessment. Validate business ownership, production behavior, and semantic parity before migration.</footer>
+  <noscript>JavaScript is required to render the embedded offline assessment data.</noscript>
+  <script id="dashboard-data" type="application/json">{{ data | tojson }}</script>
+  <script>
+    (() => {
+      "use strict";
+      const data = JSON.parse(document.getElementById("dashboard-data").textContent);
+      const workflows = data.workflows || [];
+      const byId = (id) => document.getElementById(id);
+      const text = (value) => value === null || value === undefined ? "" : String(value);
+      const group = (field) => workflows.reduce((counts, item) => {
+        const key = text(item[field]) || "Unspecified";
+        counts.set(key, (counts.get(key) || 0) + 1);
+        return counts;
+      }, new Map());
+      const sortedKeys = (values) => [...new Set(values.map(text).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b));
+
+      const setText = (id, value) => { byId(id).textContent = text(value); };
+      const cell = (value, className = "") => {
+        const element = document.createElement("td");
+        element.textContent = text(value);
+        if (className) element.className = className;
+        return element;
+      };
+      const tabButtons = [...document.querySelectorAll("[role='tab'][data-tab]")];
+      const tabNames = tabButtons.map((button) => button.dataset.tab);
+      const activateTab = (name, updateHash = true) => {
+        const selectedName = tabNames.includes(name) ? name : "overview";
+        tabButtons.forEach((button) => {
+          const selected = button.dataset.tab === selectedName;
+          button.setAttribute("aria-selected", text(selected));
+          button.tabIndex = selected ? 0 : -1;
+          byId(button.getAttribute("aria-controls")).hidden = !selected;
+        });
+        if (updateHash) {
+          history.replaceState(null, "", `#${selectedName}`);
+        }
+      };
+      tabButtons.forEach((button, index) => {
+        button.addEventListener("click", () => activateTab(button.dataset.tab));
+        button.addEventListener("keydown", (event) => {
+          let nextIndex = index;
+          if (event.key === "ArrowRight") nextIndex = (index + 1) % tabButtons.length;
+          else if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabButtons.length) % tabButtons.length;
+          else if (event.key === "Home") nextIndex = 0;
+          else if (event.key === "End") nextIndex = tabButtons.length - 1;
+          else return;
+          event.preventDefault();
+          const next = tabButtons[nextIndex];
+          activateTab(next.dataset.tab);
+          next.focus();
+        });
+      });
+      activateTab(location.hash.slice(1), false);
+      setText("run-id", data.runId);
+      setText("routing-basis", data.routingBasis === "compiler_confirmed"
+        ? "Compiler-confirmed Fabric fit" : "Static mapping");
+      setText("report-scope", `${data.workflowCount} assessed · ${data.failedCount} failed`);
+      setText("kpi-workflows", data.workflowCount);
+      setText("kpi-native", workflows.filter((item) => item.recommendedTarget !== "Manual rework").length);
+      setText("kpi-manual", workflows.filter((item) => item.recommendedTarget === "Manual rework").length);
+      setText("kpi-effort", `${workflows.reduce((sum, item) => sum + Number(item.estimatedEffortDays || 0), 0).toFixed(1)} d`);
+      const optimized = data.capacity?.scenarios?.find((item) => item.name === "Optimized");
+      setText("kpi-capacity", optimized?.recommended_sku || "N/A");
+      const totals = workflows.reduce((result, item) => ({
+        tools: result.tools + Number(item.toolCount || 0),
+        connections: result.connections + Number(item.connectionCount || 0),
+        dependencies: result.dependencies + Number(item.dependencyCount || 0),
+        dataSources: result.dataSources + Number(item.dataSourceCount || 0),
+      }), { tools: 0, connections: 0, dependencies: 0, dataSources: 0 });
+      setText("fact-tools", totals.tools);
+      setText("fact-connections", totals.connections);
+      setText("fact-dependencies", totals.dependencies);
+      setText("fact-data-sources", totals.dataSources);
+
+      const manualCount = workflows.filter((item) => item.recommendedTarget === "Manual rework").length;
+      const highCount = workflows.filter((item) => ["High", "Critical"].includes(item.complexityBand)).length;
+      const readiness = byId("readiness");
+      const conditional = manualCount > 0 || highCount > 0 || data.failedCount > 0;
+      readiness.textContent = conditional ? "Conditional proceed" : "Proceed";
+      readiness.className = `readiness ${conditional ? "warn" : "ok"}`;
+      setText("readiness-narrative", conditional
+        ? `Mobilize native-ready workflows while resolving ${manualCount} manual-rework item(s), ${highCount} high-complexity item(s), and ${data.failedCount} parse failure(s).`
+        : "The assessed workflows have native Fabric routes and no high-complexity or parse-failure blockers.");
+
+      const capacity = data.capacity;
+      if (capacity) {
+        setText("capacity-coverage", `${Number(capacity.coverage_percent || 0).toFixed(0)}%`);
+        setText("capacity-monthly", `${Number(capacity.monthly_cu_hours || 0).toFixed(1)} CU-h`);
+        setText("capacity-modeled", `${capacity.modeled_count}/${capacity.eligible_count}`);
+        setText("capacity-unconfirmed", capacity.unconfirmed_count);
+        const scenarioBody = byId("capacity-scenarios");
+        (capacity.scenarios || []).forEach((scenario) => {
+          const row = document.createElement("tr");
+          row.append(
+            cell(scenario.name),
+            cell(Number(scenario.required_cu || 0).toFixed(2)),
+            cell(scenario.recommended_sku),
+          );
+          scenarioBody.append(row);
+        });
+      }
+
+      const renderList = (id, values, emptyText) => {
+        const list = byId(id);
+        list.replaceChildren();
+        const items = values?.length ? values : [emptyText];
+        items.forEach((value) => {
+          const entry = document.createElement("li");
+          entry.textContent = text(value);
+          list.append(entry);
+        });
+      };
+      renderList("capacity-assumptions", capacity?.assumptions, "No capacity assumptions available.");
+      const renderBars = (id, counts) => {
+        const host = byId(id);
+        const maximum = Math.max(1, ...counts.values());
+        [...counts.entries()]
+          .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+          .forEach(([label, count]) => {
+            const row = document.createElement("div");
+            row.className = "bar-row";
+            const name = document.createElement("span");
+            name.className = "bar-label";
+            name.title = label;
+            name.textContent = label;
+            const track = document.createElement("div");
+            track.className = "bar-track";
+            const fill = document.createElement("div");
+            fill.className = "bar-fill";
+            fill.style.width = `${(count / maximum) * 100}%`;
+            track.append(fill);
+            const value = document.createElement("span");
+            value.className = "bar-count";
+            value.textContent = text(count);
+            row.append(name, track, value);
+            host.append(row);
+          });
+      };
+      renderBars("target-bars", group("recommendedTarget"));
+      renderBars("complexity-bars", group("complexityBand"));
+      renderBars("wave-bars", group("migrationWave"));
+
+      const countValues = (values) => values.reduce((counts, value) => {
+        const key = text(value) || "Unspecified";
+        counts.set(key, (counts.get(key) || 0) + 1);
+        return counts;
+      }, new Map());
+      const summarizeCounts = (counts) => [...counts.entries()]
+        .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+        .map(([label, count]) => `${label}: ${count}`)
+        .join(" · ");
+      const waveLabels = {
+        "Wave 1": "Wave 1",
+        "Pilot": "Wave 2 · Pilot",
+        "Wave 2": "Wave 3",
+        "Redesign": "Wave 4 · Redesign",
+      };
+      const waveRanks = new Map([
+        ["Wave 1", 1],
+        ["Pilot", 2],
+        ["Wave 2", 3],
+        ["Redesign", 4],
+      ]);
+      const waveGroups = [...workflows.reduce((groups, item) => {
+        const key = text(item.migrationWave) || "Unspecified";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(item);
+        return groups;
+      }, new Map()).entries()].sort((left, right) =>
+        (waveRanks.get(left[0]) || 99) - (waveRanks.get(right[0]) || 99)
+        || left[0].localeCompare(right[0]));
+      setText("wave-count", waveGroups.length);
+      setText("wave-workflow-count", workflows.length);
+      setText("wave-effort", `${workflows.reduce((sum, item) =>
+        sum + Number(item.estimatedEffortDays || 0), 0).toFixed(1)} d`);
+      setText("wave-manual-count", manualCount);
+      const waveSummary = byId("wave-summary-rows");
+      const waveCards = byId("wave-cards");
+      waveGroups.forEach(([wave, items]) => {
+        const effort = items.reduce((sum, item) =>
+          sum + Number(item.estimatedEffortDays || 0), 0);
+        const targetMix = summarizeCounts(countValues(items.map((item) => item.recommendedTarget)));
+        const complexityMix = summarizeCounts(countValues(items.map((item) => item.complexityBand)));
+        const label = waveLabels[wave] || wave;
+        const row = document.createElement("tr");
+        row.append(
+          cell(label),
+          cell(items.length),
+          cell(`${effort.toFixed(1)} d`),
+          cell(targetMix),
+          cell(complexityMix),
+        );
+        waveSummary.append(row);
+
+        const card = document.createElement("article");
+        card.className = "wave-card";
+        const heading = document.createElement("h3");
+        heading.textContent = label;
+        const summary = document.createElement("p");
+        summary.textContent = `${items.length} workflow${items.length === 1 ? "" : "s"} · ${effort.toFixed(1)} days · ${targetMix}`;
+        const list = document.createElement("ul");
+        list.className = "detail-list";
+        items.forEach((item) => {
+          const entry = document.createElement("li");
+          entry.textContent = `${item.path} · ${item.complexityBand} · ${item.recommendedTarget}`;
+          list.append(entry);
+        });
+        card.append(heading, summary, list);
+        waveCards.append(card);
+      });
+
+      const filters = {
+        recommendedTarget: byId("target-filter"),
+        complexityBand: byId("complexity-filter"),
+        migrationWave: byId("wave-filter"),
+      };
+      Object.entries(filters).forEach(([field, select]) => {
+        sortedKeys(workflows.map((item) => item[field])).forEach((value) => {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = value;
+          select.append(option);
+        });
+      });
+
+      let selectedWorkflowPath = workflows[0]?.path || "";
+      const renderWorkflowDetails = (item, scroll = true) => {
+        selectedWorkflowPath = item.path;
+        byId("workflow-details").hidden = false;
+        setText("detail-path", item.path);
+        setText("detail-source", `${item.sourceProduct} · ${item.assetType} · ${item.migrationWave} · ${Number(item.estimatedEffortDays || 0).toFixed(1)} days`);
+        setText("detail-complexity", `${item.complexityBand} (${item.complexityScore})`);
+        setText("detail-recommendation", `${item.recommendedTarget}: ${item.recommendationReason}`);
+        const targets = byId("detail-targets");
+        targets.replaceChildren();
+        (item.targetComponents?.length ? item.targetComponents : [item.recommendedTarget]).forEach((value) => {
+          const chip = document.createElement("span");
+          chip.className = "chip";
+          chip.textContent = text(value);
+          targets.append(chip);
+        });
+        renderList("detail-tools", (item.tools || []).map((tool) =>
+          `${tool.name} × ${tool.count} · ${tool.support}`), "No tool inventory.");
+        renderList("detail-dependencies", item.dependencies, "No dependencies detected.");
+        renderList("detail-data-sources", item.dataSources, "No data sources detected.");
+        renderList("detail-unsupported", item.unsupportedTools, "No unsupported tools detected.");
+        renderList("detail-identity", [
+          `Native ID: ${item.nativeId || "Not supplied"}`,
+          `Folder: ${item.folder || "Not supplied"}`,
+        ], "No identity metadata.");
+        renderList("detail-scope", [
+          `Tools: ${item.toolCount}`,
+          `Connections: ${item.connectionCount}`,
+          `Dependencies: ${item.dependencyCount}`,
+          `Data sources: ${item.dataSourceCount}`,
+        ], "No scope metadata.");
+        setText("detail-registry-version", `Registry: ${item.registryVersion}`);
+        setText("detail-rules-version", `Rules: ${item.rulesVersion}`);
+        setText("detail-graph-version", `Graph schema: ${item.graphSchemaVersion}`);
+        byId("workflow-rows").querySelectorAll("tr").forEach((row) => {
+          const selected = row.dataset.workflowPath === selectedWorkflowPath;
+          row.classList.toggle("selected", selected);
+          row.setAttribute("aria-selected", text(selected));
+          const button = row.querySelector(".detail-button");
+          if (button) button.textContent = selected ? "Selected" : "View";
+        });
+        if (scroll) {
+          byId("workflow-details").scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      };
+      const renderTable = () => {
+        const query = byId("search").value.trim().toLocaleLowerCase();
+        const visible = workflows.filter((item) => {
+          const matchesQuery = !query || [
+            item.path,
+            item.sourceProduct,
+            item.recommendedTarget,
+            item.migrationWave,
+          ].some((value) => text(value).toLocaleLowerCase().includes(query));
+          return matchesQuery
+            && Object.entries(filters).every(([field, select]) => !select.value || item[field] === select.value);
+        });
+        const body = byId("workflow-rows");
+        body.replaceChildren();
+        visible.forEach((item) => {
+          const row = document.createElement("tr");
+          row.dataset.workflowPath = item.path;
+          row.tabIndex = 0;
+          row.setAttribute("aria-label", `Show details for ${item.path}`);
+          row.addEventListener("click", () => renderWorkflowDetails(item));
+          row.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              renderWorkflowDetails(item);
+            }
+          });
+          const detailCell = document.createElement("td");
+          const detailButton = document.createElement("button");
+          detailButton.type = "button";
+          detailButton.className = "detail-button";
+          detailButton.textContent = item.path === selectedWorkflowPath ? "Selected" : "View";
+          detailButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            renderWorkflowDetails(item);
+          });
+          detailCell.append(detailButton);
+          if (item.path === selectedWorkflowPath) {
+            row.classList.add("selected");
+            row.setAttribute("aria-selected", "true");
+          } else {
+            row.setAttribute("aria-selected", "false");
+          }
+          row.append(
+            cell(item.path),
+            cell(item.sourceProduct),
+            cell(`${item.complexityBand} (${item.complexityScore})`),
+            cell(item.recommendedTarget),
+            cell(item.migrationWave),
+            cell(`${Number(item.estimatedEffortDays || 0).toFixed(1)} d`),
+            cell(item.toolCount),
+            cell(item.dependencyCount),
+            cell(item.unsupportedTools?.length || 0, item.unsupportedTools?.length ? "risk" : ""),
+            detailCell,
+          );
+          body.append(row);
+        });
+        const hasFilters = Boolean(query) || Object.values(filters).some((select) => select.value);
+        const totalLabel = `${workflows.length} workflow${workflows.length === 1 ? "" : "s"}`;
+        setText("visible-count", hasFilters ? `${visible.length} of ${totalLabel}` : totalLabel);
+        byId("empty").hidden = visible.length !== 0;
+      };
+      byId("search").addEventListener("input", renderTable);
+      Object.values(filters).forEach((select) => select.addEventListener("change", renderTable));
+      byId("clear-filters").addEventListener("click", () => {
+        byId("search").value = "";
+        Object.values(filters).forEach((select) => { select.value = ""; });
+        renderTable();
+      });
+      byId("print").addEventListener("click", () => window.print());
+      renderTable();
+      if (workflows.length) renderWorkflowDetails(workflows[0], false);
+    })();
+  </script>
+</body>
+</html>

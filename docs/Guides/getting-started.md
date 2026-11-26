@@ -1,0 +1,88 @@
+---
+title: Getting Started
+description: Run an end-to-end ETL assessment and generate Microsoft Fabric artifacts
+ms.date: 2026-11-25
+ms.topic: tutorial
+---
+
+## Getting Started
+
+This guide walks delivery engineers, migration architects, and contributors through running their first end-to-end ETL assessment and Microsoft Fabric code generation pass.
+
+## Prerequisites
+
+| Tool | Version | Purpose |
+| --- | --- | --- |
+| **Python** | `3.12+` | Core assessment, compiler, API, Jinja2 + HTMX analyst UI, and CLI runtime |
+| **pip** | Latest | Python dependency installer and wheel builder (`python -m pip`) |
+| **PowerShell** | `7.0+` (`pwsh`) | Running `scripts/Start-LocalApp.ps1` and `scripts/Deploy-FabricArtifacts.ps1` |
+| **Node.js & npm** | `22.x` (optional) | Only needed for Fabric deployment bundle scripts (`scripts/*.mjs`) and the optional Fabric-hosted Rayfin app (`apps/etl-migration-assessment-app`) |
+| **Fabric Runtime** | `2.0` (GA) | Production validation for generated PySpark notebooks |
+
+## 1. Build and Launch the Analyst Web Application
+
+From the repository root, build and launch the app directly from the four workspace `.whl` packages:
+
+```powershell
+pwsh -NoProfile -File scripts\Start-LocalApp.ps1
+```
+
+Or run in editable developer mode:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ./packages/etl-migration-core -e ./packages/etl-portfolio-assessment -e ./packages/etl-target-fabric -e ".[dev]"
+tool serve
+```
+
+Open **`http://127.0.0.1:8050`** in your browser.
+
+## 2. Run Your First Synthetic Estate Assessment
+
+1. Select **New assessment** in the top navigation bar.
+2. Choose **Alteryx** (or **Informatica** for PowerCenter `.xml` / IDMC `.zip` exports).
+3. Select **Folder** and choose the repository's synthetic `alteryx-workflows` directory (or `tests/fixtures/powercenter` for Informatica).
+4. Review the pre-run discovery summary (discovered workflow count, byte totals, and any skipped files), then click **Confirm and assess**.
+5. Inspect the **Portfolio** dashboard:
+   - A banner reads **Routing basis: static mapping**. Assessment does not generate code, so the Fabric targets, waves, effort, and capacity are the support-matrix mapping until you open **Fabric Deployment** in the next section.
+   - Export estate assessment summaries as **JSON** or formula-defused **CSV**, or click **Open Fabric Deployment** to proceed to code generation.
+   - Open **Workflows** and click any workflow row to open the **six-tab workflow inspection drawer** (Summary, Source Workflow, Fabric design, Risk assessment, Validation, and Fabric deployment handoff).
+   - Switch to **Technical Details** for filterable, paginated tool and endpoint registers, and **Capacity Sizing** to model Fabric F-SKU capacity.
+
+## 3. Generate and Export Microsoft Fabric Artifacts
+
+Open the **Fabric Deployment** tab in the sidebar (or click **Continue to Fabric Deployment** from a workflow drawer). Opening it first confirms each Fabric route with the compiler, once per run. Return to **Portfolio** afterwards to see compiler-confirmed targets, waves, and effort without the static-mapping banner. Some workflows change target or wave, and capacity is recalculated. Then:
+
+- Select the target platform (**Microsoft Fabric** is ready; **Databricks**, **Azure Synapse**, and **Snowflake** appear as fail-closed roadmap placeholders).
+- Click **Generate Notebook code**, **Generate Dataflow code**, or **Generate Pipeline code** to compile **Dataflow Gen2** (`mashup.pq` + `queryMetadata.json`), **Fabric Notebook** (`.ipynb`), or **Data Pipeline** (`pipeline-content.json`) definitions now and review them on the page. Nothing is saved to the shared artifacts folder. You can also download target/workflow ZIP packages.
+- Select ready workflows, run dry-run validation, and dispatch GitHub Actions or GitLab CI workflows.
+
+Equivalent CLI workflow:
+
+```powershell
+tool preview .\alteryx-workflows
+tool assess .\alteryx-workflows
+tool generate <completed-run-id> --target all --output generated-fabric-workflows
+```
+
+The API can queue one target and return cached candidates without writing
+`generated-fabric-workflows`. That path is not a portal button. Use the CLI
+`generate` command when you need a local artifact tree. See the
+[User Guide](user-guide.md#step-4-generate-artifacts-and-dispatch-cicd).
+
+### Validate Generated Notebooks
+
+Validate generated PySpark notebooks in a Fabric workspace configured for
+Fabric Runtime 2.0 before production use. Runtime 2.0 uses Apache Spark 4.1,
+Python 3.13, and Delta Lake 4.2.
+
+The local Python 3.12 environment runs the accelerator itself. It does not
+replace validation in the Fabric-managed runtime.
+
+## Next Steps
+
+- Review [Installation & Runtime Modes](installation.md) for one-step FEMA Fabric workspace deployment as well as local, CLI, Windows desktop, and Docker loopback options.
+- Follow [Fabric CI/CD Setup](fabric-ci-cd-setup.md) to configure secretless Microsoft Entra OIDC deployment via GitHub Actions or GitLab CI.
+- Read the [Developer Contribution Guide](developer-contribution-guide.md) before adding new Alteryx tools or Informatica transformations.

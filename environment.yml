@@ -1,0 +1,11 @@
+name: fabric-etl-migration-accelerator
+channels:
+  - defaults
+dependencies:
+  - python=3.12.8
+  - pip
+  # - pip:
+  #     # - "-e ./packages/etl-migration-core"
+  #     # - "-e ./packages/etl-portfolio-assessment"
+  #     # - "-e ./packages/etl-target-fabric"
+  #     # - "-e .[dev]"

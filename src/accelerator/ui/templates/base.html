@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Microsoft Fabric ETL Migration Accelerator</title>
+  <link rel="stylesheet" href="/assets/app.css" />
+  <script src="/assets/htmx.min.js" defer></script>
+  <script src="/assets/app.js" defer></script>
+</head>
+<body data-csrf-token="{{ csrf_token }}">
+  <div id="root">
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">FM</div>
+          <div>
+            <div class="brand-title">Fabric ETL Accelerator</div>
+            <div class="brand-sub">v{{ version }} · Python UI</div>
+          </div>
+        </div>
+
+        <nav class="nav" aria-label="Primary navigation">
+          <button type="button" class="nav-btn {% if active_tab == 'intake' %}active{% endif %}" data-nav="intake"
+            hx-get="/ui/intake" hx-target="#stage" hx-swap="innerHTML"
+            onclick="setActiveNav('intake')">
+            <span>New Assessment</span>
+          </button>
+          <button type="button" class="nav-btn {% if active_tab == 'portfolio' %}active{% endif %}" data-nav="portfolio"
+            hx-get="/ui/portfolio" hx-include="#active-run-select" hx-target="#stage" hx-swap="innerHTML"
+            onclick="setActiveNav('portfolio')">
+            <span>Portfolio</span>
+          </button>
+          <button type="button" class="nav-btn {% if active_tab == 'workflows' %}active{% endif %}" data-nav="workflows"
+            hx-get="/ui/workflows" hx-include="#active-run-select" hx-target="#stage" hx-swap="innerHTML"
+            onclick="setActiveNav('workflows')">
+            <span>Workflows</span>
+          </button>
+          <button type="button" class="nav-btn {% if active_tab == 'plan' %}active{% endif %}" data-nav="plan"
+            hx-get="/ui/plan" hx-include="#active-run-select" hx-target="#stage" hx-swap="innerHTML"
+            onclick="setActiveNav('plan')">
+            <span>Migration Plan</span>
+          </button>
+          <button type="button" class="nav-btn {% if active_tab == 'capacity' %}active{% endif %}" data-nav="capacity"
+            hx-get="/ui/capacity" hx-include="#active-run-select" hx-target="#stage" hx-swap="innerHTML"
+            onclick="setActiveNav('capacity')">
+            <span>Capacity Sizing</span>
+          </button>
+          <button type="button" class="nav-btn {% if active_tab == 'technical' %}active{% endif %}" data-nav="technical"
+            hx-get="/ui/technical" hx-include="#active-run-select" hx-target="#stage" hx-swap="innerHTML"
+            onclick="setActiveNav('technical')">
+            <span>Technical Details</span>
+          </button>
+          <button type="button" class="nav-btn {% if active_tab == 'deployment' %}active{% endif %}" data-nav="deployment"
+            hx-get="/ui/deployment" hx-include="#active-run-select" hx-target="#stage" hx-swap="innerHTML"
+            onclick="setActiveNav('deployment')">
+            <span>Fabric Deployment</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-section" id="run-selector-box">
+          <div class="sidebar-label">Active Assessment Run</div>
+          <select id="active-run-select" class="run-select" name="run_id"
+            hx-get="/ui/portfolio" hx-target="#stage" hx-swap="innerHTML" hx-trigger="change"
+            onchange="setActiveNav('portfolio')">
+            <option value="">— Select completed run —</option>
+            {% for r in runs %}
+            <option value="{{ r.id }}" {% if r.id == active_run_id %}selected{% endif %}>
+              {{ r.id[:8] }} · {{ r.status }} ({{ r.processed }}/{{ r.total }})
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="sidebar-footer">
+          <div>Mode: <strong>{{ deployment_mode }}</strong> · Python 3.12</div>
+          <div class="btn-row">
+            <button type="button" class="btn btn-sm" onclick="toggleTheme()">Toggle theme</button>
+            <a class="btn btn-sm" href="/docs" target="_blank" rel="noopener">API docs</a>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div id="stage">
+          {% include initial_partial %}
+        </div>
+      </main>
+    </div>
+    <div id="drawer-host"></div>
+  </div>
+</body>
+</html>

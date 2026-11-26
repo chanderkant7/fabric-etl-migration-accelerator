@@ -1,0 +1,118 @@
+<div class="page-header">
+  <div>
+    <h1>Technical Assessment Evidence</h1>
+    <p>Inspect parsed tool inventories, source expressions, inputs/outputs, dependencies, findings, and canvas connections.</p>
+  </div>
+  {% if run and run.status == 'completed' %}
+  <div class="btn-row">
+    <a class="btn btn-sm" href="/api/registry" target="_blank" rel="noopener">Versioned Registry</a>
+    <a class="btn btn-sm" href="/api/runs/{{ run.id }}/export?format=json">Export Evidence JSON</a>
+  </div>
+  {% endif %}
+</div>
+
+{% if not run or not run.result %}
+<div class="card"><div class="empty-inline">Select a completed assessment run to inspect technical registers.</div></div>
+{% else %}
+<div class="kpi-grid">
+  <div class="kpi"><div class="kpi-label">Workflows</div><div class="kpi-value">{{ tech_kpis.workflows }}</div></div>
+  <div class="kpi"><div class="kpi-label">Source Tools</div><div class="kpi-value">{{ tech_kpis.tools }}</div></div>
+  <div class="kpi"><div class="kpi-label">Connections</div><div class="kpi-value">{{ tech_kpis.connections }}</div></div>
+  <div class="kpi"><div class="kpi-label">Dependencies</div><div class="kpi-value">{{ tech_kpis.dependencies }}</div></div>
+  <div class="kpi"><div class="kpi-label">Endpoints</div><div class="kpi-value">{{ tech_kpis.endpoints }}</div></div>
+  <div class="kpi"><div class="kpi-label">Findings</div><div class="kpi-value">{{ tech_kpis.findings }}</div></div>
+</div>
+
+<div class="card">
+  <h2>Fabric Tool-Mapping Distribution</h2>
+  <div class="bar-list">
+    {% for label, count, color in mapping_bars %}
+    <div class="bar-row">
+      <div>{{ label }}</div>
+      <div class="bar-track"><div class="bar-fill {{ color }}" style="width: {{ ((count / tech_kpis.tools) * 100) | round(1) if tech_kpis.tools else 0 }}%;"></div></div>
+      <strong>{{ count }}</strong>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="tabs">
+  {% for key, label in [
+    ('tools', 'Tools'),
+    ('expressions', 'Expressions'),
+    ('endpoints', 'Inputs & Outputs'),
+    ('dependencies', 'Dependencies'),
+    ('findings', 'Findings'),
+    ('connections', 'Connections')
+  ] %}
+  <button type="button" class="tab-btn {% if register == key %}active{% endif %}"
+    hx-get="/ui/technical?run_id={{ run.id }}&register={{ key }}&workflow={{ workflow_filter | urlencode }}"
+    hx-target="#stage" hx-swap="innerHTML">
+    {{ label }}
+  </button>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <form class="form-row" hx-get="/ui/technical" hx-target="#stage" hx-swap="innerHTML">
+    <input type="hidden" name="run_id" value="{{ run.id }}" />
+    <input type="hidden" name="register" value="{{ register }}" />
+    <div class="field">
+      <label for="tech-search">Search Register</label>
+      <input id="tech-search" name="q" type="search" value="{{ q }}" placeholder="Filter rows…" />
+    </div>
+    <div class="field" style="max-width: 260px;">
+      <label for="tech-workflow">Workflow</label>
+      <select id="tech-workflow" name="workflow">
+        <option value="">All workflows</option>
+        {% for wf_name in workflow_names %}
+        <option value="{{ wf_name }}" {% if wf_name == workflow_filter %}selected{% endif %}>{{ wf_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Apply</button>
+  </form>
+
+  <p style="font-size:12px;color:var(--muted);margin:0 0 8px;">
+    Showing {{ rows | length }} of {{ total_rows }} row(s) (page {{ page + 1 }} of {{ total_pages }})
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          {% for col in columns %}
+          <th>{{ col }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          {% for cell in row %}
+          <td>{{ cell }}</td>
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ columns | length }}"><div class="empty-inline">No matching records in this register.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if total_pages > 1 %}
+  <div class="btn-row" style="margin-top: 12px; justify-content: flex-end;">
+    {% if page > 0 %}
+    <button type="button" class="btn btn-sm"
+      hx-get="/ui/technical?run_id={{ run.id }}&register={{ register }}&q={{ q | urlencode }}&workflow={{ workflow_filter | urlencode }}&page={{ page - 1 }}"
+      hx-target="#stage" hx-swap="innerHTML">← Previous</button>
+    {% endif %}
+    {% if page + 1 < total_pages %}
+    <button type="button" class="btn btn-sm"
+      hx-get="/ui/technical?run_id={{ run.id }}&register={{ register }}&q={{ q | urlencode }}&workflow={{ workflow_filter | urlencode }}&page={{ page + 1 }}"
+      hx-target="#stage" hx-swap="innerHTML">Next →</button>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}

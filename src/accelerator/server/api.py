@@ -1,0 +1,1099 @@
+"""FastAPI entry point."""
+
+import asyncio
+import logging
+import os
+import re
+import secrets
+import shutil
+import tempfile
+import time
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
+from typing import Annotated, Literal
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, TypeAdapter
+from starlette.concurrency import run_in_threadpool
+
+from accelerator import __version__
+from accelerator.delivery.base import (
+    DeploymentConfigurationError,
+    DeploymentDispatchError,
+    DeploymentSelectionBase,
+)
+from accelerator.delivery.github import (
+    GitHubDeploymentResult,
+    GitHubDeploymentSelection,
+    GitHubDeploymentService,
+)
+from accelerator.delivery.gitlab import (
+    GitLabDeploymentResult,
+    GitLabDeploymentSelection,
+    GitLabDeploymentService,
+)
+from accelerator.delivery.provenance import PublicationDispatch
+from accelerator.runtime.models import GenerationJob
+from accelerator.runtime.runs import (
+    Run,
+    RunService,
+    RunStatus,
+    RunTargetEvaluation,
+    SnapshotPreview,
+)
+from accelerator.server.deployment import (
+    DeploymentTarget,
+    plan_deployment_dispatch,
+    resolve_deployment_artifact,
+)
+from accelerator.server.schemas import (
+    Confirmation,
+    DevSelection,
+    FolderSelectionResponse,
+    LocalSelection,
+    PluginsResponse,
+    PublicationReference,
+    RunListResponse,
+    SourcesResponse,
+    TargetsResponse,
+)
+from accelerator.server.uploads import BoundedUploadRoute, stage_uploads
+from accelerator.settings import Settings, bind_log_context, configure_logging
+from accelerator.targets import (
+    TargetPlatformRegistry,
+    UnknownTargetPlatformError,
+    create_default_target_registry,
+)
+from accelerator.ui.offline_dashboard import build_offline_dashboard_package
+from accelerator.ui.router import STATIC_DIR as UI_STATIC_DIR
+from accelerator.ui.router import create_ui_router
+from etl_migration_core.contracts.spi import (
+    TargetCapacityResult,
+    TargetGenerationResult,
+    TargetPlatformInfo,
+    UnsupportedTargetCapabilityError,
+)
+from etl_migration_core.host import PluginHost
+from etl_migration_core.intake.discovery import InputRejectedError
+from etl_migration_core.sources.alteryx.graph import WorkflowGraph
+from etl_portfolio_assessment.evidence.extractor import EvidenceResponse
+from etl_portfolio_assessment.service.schemas import NeutralEstateAssessmentResponse
+from etl_target_fabric.application import FabricAssessmentApplication as AssessmentApplication
+from etl_target_fabric.assessment.schemas import DiscoverySummaryResponse, EstateAssessmentResponse
+from etl_target_fabric.assessment.workflow import REGISTRY_VERSION, RULES_VERSION, registry_entries
+from etl_target_fabric.capacity.model import CapacityPortfolioEstimate, CapacityUpdate, capacity_csv
+from etl_target_fabric.compilers.alteryx import Candidate, Target
+from etl_target_fabric.delivery.deployer import DryRunResult, dry_run
+
+load_dotenv()
+
+logger = logging.getLogger(__name__)
+WORKER_RETRY_SECONDS = 5.0
+WORKER_IDLE_POLL_SECONDS = 2.0
+WORKER_ACTIVE_POLL_SECONDS = 0.15
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _notify_worker() -> None:
+    """Wake the background worker loop immediately when new work is queued."""
+    wakeup = getattr(app.state, "worker_wakeup", None)
+    loop = getattr(app.state, "worker_loop", None)
+    if isinstance(wakeup, asyncio.Event) and isinstance(loop, asyncio.AbstractEventLoop):
+        with suppress(RuntimeError):
+            loop.call_soon_threadsafe(wakeup.set)
+
+
+@asynccontextmanager
+async def lifespan(api: FastAPI) -> AsyncIterator[None]:
+    settings = Settings.from_environment()
+    configure_logging(settings)
+    if not hasattr(api.state, "run_service") or api.state.run_service.closed:
+        api.state.run_service = _new_run_service()
+    concurrency = settings.worker_concurrency
+    executor = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix="accelerator")
+    wakeup = asyncio.Event()
+    api.state.worker_wakeup = wakeup
+    api.state.worker_loop = asyncio.get_running_loop()
+    futures: dict[str, Future[None]] = {}
+    retry_after: dict[str, float] = {}
+
+    async def resume_pending() -> None:
+        while True:
+            wakeup.clear()
+            try:
+                service = api.state.run_service
+                for identity in await run_in_threadpool(service.pending):
+                    if (
+                        identity not in futures
+                        and len(futures) < concurrency
+                        and retry_after.get(identity, 0) <= time.monotonic()
+                    ):
+                        futures[identity] = executor.submit(service.execute, identity)
+                for job_id in await run_in_threadpool(service.pending_generation_jobs):
+                    key = f"job:{job_id}"
+                    if (
+                        key not in futures
+                        and len(futures) < concurrency
+                        and retry_after.get(key, 0) <= time.monotonic()
+                    ):
+                        futures[key] = executor.submit(service.execute_generation_job, job_id)
+                for identity, future in list(futures.items()):
+                    if future.done():
+                        del futures[identity]
+                        if (error := future.exception()) is not None:
+                            logger.error("Run %s worker failed", identity, exc_info=error)
+                            retry_after[identity] = time.monotonic() + WORKER_RETRY_SECONDS
+            except Exception:
+                logger.exception("Run worker loop failed; retrying")
+                await asyncio.sleep(WORKER_RETRY_SECONDS)
+                continue
+            wait_seconds = WORKER_ACTIVE_POLL_SECONDS if futures else WORKER_IDLE_POLL_SECONDS
+            with suppress(TimeoutError):
+                await asyncio.wait_for(wakeup.wait(), timeout=wait_seconds)
+
+    worker = asyncio.create_task(resume_pending())
+    try:
+        yield
+    finally:
+        api.state.worker_wakeup = None
+        api.state.worker_loop = None
+        worker.cancel()
+        with suppress(asyncio.CancelledError, Exception):
+            await worker
+        await run_in_threadpool(executor.shutdown, wait=True)
+        _shutdown_dialog_executor()
+        api.state.run_service.close()
+
+
+app = FastAPI(title="Alteryx to Fabric Accelerator", version=__version__, lifespan=lifespan)
+app.router.route_class = BoundedUploadRoute
+app.state.csrf_token = secrets.token_urlsafe(32)
+application = AssessmentApplication()
+DESKTOP_TOKEN_COOKIE = "accelerator-desktop-token"
+
+
+def _extract_host(host_header: str) -> str:
+    """Return the normalized hostname from an HTTP Host header, stripping any port."""
+    value = host_header.strip().casefold()
+    if value.startswith("["):
+        end = value.find("]")
+        return value[1:end] if end != -1 else value
+    return value.split(":", 1)[0]
+
+
+def _host_allowed(host: str, allowed_hosts: tuple[str, ...]) -> bool:
+    if not host:
+        return False
+    for pattern in allowed_hosts:
+        if pattern == "*":
+            return True
+        if pattern.startswith("*."):
+            suffix = pattern[1:]
+            if host.endswith(suffix) and len(host) > len(suffix):
+                return True
+        elif host == pattern:
+            return True
+    return False
+
+
+def _require_local_filesystem() -> None:
+    if not Settings.from_environment().allow_local_filesystem:
+        raise HTTPException(
+            status_code=403,
+            detail="Local filesystem access is disabled in server mode",
+        )
+
+
+def _request_id(request: Request) -> str:
+    supplied = request.headers.get("x-request-id", "").strip()
+    if supplied and _REQUEST_ID_PATTERN.fullmatch(supplied):
+        return supplied
+    return uuid.uuid4().hex
+
+
+@app.middleware("http")
+async def local_origin_guard(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    req_id = _request_id(request)
+    with bind_log_context(request_id=req_id):
+        try:
+            settings = Settings.from_environment()
+        except ValueError as error:
+            return Response(str(error), status_code=503, headers={"X-Request-ID": req_id})
+        host = _extract_host(request.headers.get("host", ""))
+        if not _host_allowed(host, settings.allowed_hosts):
+            return Response(
+                "Invalid host header", status_code=400, headers={"X-Request-ID": req_id}
+            )
+        desktop_token = settings.desktop_token or ""
+        if desktop_token:
+            header_token = request.headers.get("x-accelerator-desktop-token", "")
+            cookie_token = request.cookies.get(DESKTOP_TOKEN_COOKIE, "")
+            query_token = request.query_params.get("desktop_token")
+            if query_token is not None:
+                if (
+                    request.method != "GET"
+                    or request.url.path != "/"
+                    or not secrets.compare_digest(query_token.encode(), desktop_token.encode())
+                ):
+                    return Response(
+                        "Desktop session token is invalid",
+                        status_code=401,
+                        headers={"X-Request-ID": req_id},
+                    )
+                bootstrap_response = RedirectResponse("/", status_code=307)
+                bootstrap_response.set_cookie(
+                    DESKTOP_TOKEN_COOKIE,
+                    desktop_token,
+                    httponly=True,
+                    samesite="strict",
+                    path="/",
+                )
+                bootstrap_response.headers["X-Request-ID"] = req_id
+                return bootstrap_response
+            if not (
+                secrets.compare_digest(header_token.encode(), desktop_token.encode())
+                or secrets.compare_digest(cookie_token.encode(), desktop_token.encode())
+            ):
+                return Response(
+                    "Desktop session token is required",
+                    status_code=401,
+                    headers={"X-Request-ID": req_id},
+                )
+        if settings.deployment_mode == "server" and request.url.path.startswith(("/api/", "/ui/")):
+            expected = settings.api_bearer_token
+            if not expected:
+                return Response(
+                    "Server API authentication is not configured",
+                    status_code=503,
+                    headers={"X-Request-ID": req_id},
+                )
+            auth_header = request.headers.get("authorization", "")
+            scheme, _, supplied = auth_header.partition(" ")
+            if scheme.casefold() != "bearer" or not secrets.compare_digest(
+                supplied.strip().encode(), expected.encode()
+            ):
+                return Response(
+                    "Bearer token is required",
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer", "X-Request-ID": req_id},
+                )
+        origin = request.headers.get("origin")
+        if origin:
+            if origin != f"{request.url.scheme}://{request.headers.get('host')}":
+                return Response(
+                    "Untrusted browser origin",
+                    status_code=403,
+                    headers={"X-Request-ID": req_id},
+                )
+            if request.method not in {"GET", "HEAD"} and not secrets.compare_digest(
+                request.headers.get("x-accelerator-token", "").encode(),
+                app.state.csrf_token.encode(),
+            ):
+                return Response(
+                    "Browser session token is required",
+                    status_code=403,
+                    headers={"X-Request-ID": req_id},
+                )
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = req_id
+        if request.url.path.startswith("/api/runs"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+
+@app.get("/health")
+@app.get("/livez")
+def health() -> dict[str, str]:
+    """Return process liveness status."""
+    return {"status": "ok", "version": __version__}
+
+
+@app.get("/readyz")
+def readiness() -> dict[str, object]:
+    """Verify run-store reachability and plugin catalog health."""
+    try:
+        with run_service()._connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+        catalog = plugin_host().catalog()
+    except Exception as error:
+        raise HTTPException(status_code=503, detail=f"Not ready: {error}") from error
+    if catalog.failed_count:
+        raise HTTPException(
+            status_code=503,
+            detail=f"{catalog.failed_count} plugin(s) failed to load",
+        )
+    return {
+        "status": "ready",
+        "version": __version__,
+        "sources": len(catalog.sources),
+        "targets": len(catalog.targets),
+        "failed_plugins": catalog.failed_count,
+    }
+
+
+@app.get("/api/intake/preview", response_model=DiscoverySummaryResponse)
+def preview(path: str = Query(min_length=1)) -> DiscoverySummaryResponse:
+    """Preview a local file, ZIP, or folder before assessment."""
+    _require_local_filesystem()
+    try:
+        return application.preview(Path(path))
+    except InputRejectedError as error:
+        raise HTTPException(
+            status_code=400,
+            detail={"path": error.path, "reason": error.reason, "message": error.detail},
+        ) from error
+
+
+@app.post("/api/intake/upload", response_model=DiscoverySummaryResponse)
+async def upload_preview(
+    mode: Annotated[Literal["files", "zip", "folder"], Form()],
+    files: Annotated[list[UploadFile], File()],
+) -> DiscoverySummaryResponse:
+    """Stage browser uploads locally and return the secure pre-run summary."""
+    if mode == "zip" and len(files) != 1:
+        raise HTTPException(status_code=400, detail="ZIP mode requires exactly one archive")
+
+    sandbox = Path(tempfile.mkdtemp(prefix="alteryx-upload-"))
+    try:
+        staged = await stage_uploads(files, sandbox)
+        target_path = staged[0] if mode == "zip" else sandbox
+        return await run_in_threadpool(application.preview, target_path)
+    except InputRejectedError as error:
+        raise HTTPException(
+            status_code=400,
+            detail={"path": error.path, "reason": error.reason, "message": error.detail},
+        ) from error
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=False)
+
+
+@app.post("/api/assessment/upload", response_model=EstateAssessmentResponse)
+async def upload_assessment(
+    mode: Annotated[Literal["files", "folder", "zip"], Form()],
+    files: Annotated[list[UploadFile], File()],
+) -> EstateAssessmentResponse:
+    """Assess uploaded XML workflows with per-file fault isolation."""
+    sandbox = Path(tempfile.mkdtemp(prefix="alteryx-assess-"))
+    try:
+        if mode == "zip" and len(files) != 1:
+            raise HTTPException(status_code=400, detail="ZIP mode requires exactly one archive")
+        staged = await stage_uploads(files, sandbox)
+        return await run_in_threadpool(application.assess, staged[0] if mode == "zip" else sandbox)
+    except InputRejectedError as error:
+        raise HTTPException(status_code=400, detail=error.detail) from error
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=False)
+
+
+_DIALOG_EXECUTOR: ThreadPoolExecutor | None = None
+
+
+def _dialog_executor() -> ThreadPoolExecutor:
+    global _DIALOG_EXECUTOR
+    if _DIALOG_EXECUTOR is None:
+        _DIALOG_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="folder-dialog")
+    return _DIALOG_EXECUTOR
+
+
+def _shutdown_dialog_executor() -> None:
+    global _DIALOG_EXECUTOR
+    executor = _DIALOG_EXECUTOR
+    _DIALOG_EXECUTOR = None
+    if executor is not None:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _pick_local_folder() -> str | None:
+    import tkinter as tk
+    from tkinter import filedialog
+
+    try:
+        root = tk.Tk()
+    except tk.TclError as error:
+        raise RuntimeError("Native folder picker is unavailable") from error
+    try:
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.lift()
+        root.focus_force()
+        selected = filedialog.askdirectory(
+            parent=root,
+            title="Select workflow folder",
+            mustexist=True,
+        )
+    except tk.TclError as error:
+        raise RuntimeError("Native folder picker is unavailable") from error
+    finally:
+        root.destroy()
+    return selected or None
+
+
+def run_service() -> RunService:
+    if not hasattr(app.state, "run_service") or app.state.run_service.closed:
+        app.state.run_service = _new_run_service()
+    service: RunService = app.state.run_service
+    return service
+
+
+def _new_run_service() -> RunService:
+    return RunService.from_settings(Settings.from_environment())
+
+
+@app.get("/api/session")
+def browser_session() -> dict[str, str]:
+    return {"token": app.state.csrf_token}
+
+
+@app.get("/api/graph/schema")
+def graph_schema() -> dict[str, object]:
+    return TypeAdapter(WorkflowGraph).json_schema()
+
+
+@app.get("/api/registry")
+def tool_registry() -> dict[str, object]:
+    return {
+        "version": REGISTRY_VERSION,
+        "rules_version": RULES_VERSION,
+        "entries": registry_entries(),
+    }
+
+
+def target_registry() -> TargetPlatformRegistry:
+    if not hasattr(app.state, "target_registry"):
+        app.state.target_registry = create_default_target_registry(
+            plugin_allowlist=Settings.from_environment().plugin_allowlist
+        )
+    registry: TargetPlatformRegistry = app.state.target_registry
+    return registry
+
+
+def plugin_host(*, with_sources: bool = True) -> PluginHost:
+    """Build the plugin view; target-only endpoints skip opening the run store."""
+    return PluginHost(
+        run_service().source_registry if with_sources else None,
+        target_registry(),
+        allowlist=Settings.from_environment().plugin_allowlist,
+    )
+
+
+@app.get("/api/sources", response_model=SourcesResponse)
+def list_source_adapters() -> SourcesResponse:
+    """List registered built-in and plugin source adapters."""
+    return SourcesResponse(sources=list(plugin_host().sources()))
+
+
+@app.get("/api/plugins", response_model=PluginsResponse)
+def list_plugins() -> PluginsResponse:
+    """Report which installed plugins loaded, failed, or were excluded by the allowlist."""
+    catalog = plugin_host().catalog()
+    return PluginsResponse(
+        allowlist=list(catalog.allowlist) if catalog.allowlist is not None else None,
+        failed_count=catalog.failed_count,
+        plugins=list(catalog.plugins),
+        diagnostics=list(catalog.diagnostics),
+    )
+
+
+@app.get("/api/targets", response_model=TargetsResponse)
+def list_target_platforms() -> TargetsResponse:
+    host = plugin_host(with_sources=False)
+    return TargetsResponse(
+        targets=list(host.targets()), faults=list(host.target_catalog().faults)
+    )
+
+
+@app.get("/api/targets/{platform_id}", response_model=TargetPlatformInfo)
+def get_target_platform(platform_id: str) -> TargetPlatformInfo:
+    try:
+        return target_registry().get_info(platform_id)
+    except UnknownTargetPlatformError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/snapshots/browse-folder", response_model=FolderSelectionResponse)
+async def browse_local_folder() -> FolderSelectionResponse:
+    _require_local_filesystem()
+    try:
+        loop = asyncio.get_running_loop()
+        selected = await loop.run_in_executor(_dialog_executor(), _pick_local_folder)
+    except (ImportError, RuntimeError, OSError) as error:
+        raise HTTPException(
+            status_code=501,
+            detail="Native folder picker is unavailable in this environment",
+        ) from error
+    return FolderSelectionResponse(path=selected)
+
+
+@app.post("/api/snapshots/local", response_model=SnapshotPreview)
+def local_snapshot(selection: LocalSelection) -> SnapshotPreview:
+    _require_local_filesystem()
+    if selection.path.startswith(("\\\\", "//")):
+        raise HTTPException(status_code=400, detail="UNC paths are not accepted")
+    try:
+        return run_service().preview(Path(selection.path))
+    except (InputRejectedError, ValueError, OSError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.post("/api/snapshots/upload", response_model=SnapshotPreview)
+async def uploaded_snapshot(
+    mode: Annotated[Literal["files", "zip", "folder"], Form()],
+    files: Annotated[list[UploadFile], File()],
+) -> SnapshotPreview:
+    if mode == "zip" and len(files) != 1:
+        raise HTTPException(status_code=400, detail="ZIP mode requires exactly one archive")
+    with tempfile.TemporaryDirectory(prefix="alteryx-snapshot-") as directory:
+        staged = await stage_uploads(files, Path(directory))
+        try:
+            return await run_in_threadpool(
+                run_service().preview, staged[0] if mode == "zip" else Path(directory)
+            )
+        except (InputRejectedError, ValueError, OSError) as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/api/runs", response_model=RunListResponse)
+def list_runs(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> RunListResponse:
+    """List runs ordered newest-first without deserializing full assessment blobs."""
+    runs, total = run_service().list_runs(limit=limit, offset=offset)
+    return RunListResponse(total=total, limit=limit, offset=offset, runs=runs)
+
+
+@app.post("/api/runs", response_model=Run, status_code=202)
+def confirm_run(confirmation: Confirmation) -> Run:
+    try:
+        created = run_service().create_run(confirmation.snapshot_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    _notify_worker()
+    return created
+
+
+@app.get("/api/runs/{identity}", response_model=Run)
+def get_run(identity: str, include_result: bool = True) -> Run:
+    try:
+        return run_service().get_run(identity, include_result=include_result)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/runs/{identity}/status", response_model=RunStatus)
+def get_run_status(identity: str) -> RunStatus:
+    try:
+        return run_service().get_run_status(identity)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/api/runs/{identity}/capacity",
+    response_model=CapacityPortfolioEstimate,
+)
+def get_capacity(identity: str) -> CapacityPortfolioEstimate:
+    try:
+        return run_service().get_capacity(identity)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.put(
+    "/api/runs/{identity}/capacity",
+    response_model=CapacityPortfolioEstimate,
+)
+def update_capacity(
+    identity: str, update: CapacityUpdate
+) -> CapacityPortfolioEstimate:
+    try:
+        return run_service().update_capacity(identity, update)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get("/api/runs/{identity}/capacity/export")
+def export_capacity(
+    identity: str, format: Literal["json", "csv"] = "json"
+) -> Response:
+    try:
+        estimate = run_service().get_capacity(identity)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if format == "csv":
+        return Response(
+            capacity_csv(estimate),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="capacity-estimate.csv"'},
+        )
+    return Response(
+        estimate.model_dump_json(indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="capacity-estimate.json"'},
+    )
+
+
+@app.post("/api/runs/{identity}/cancel", response_model=Run)
+def cancel_run(identity: str) -> Run:
+    get_run(identity)
+    return run_service().cancel(identity)
+
+
+@app.post("/api/runs/{identity}/jobs", response_model=GenerationJob, status_code=202)
+def create_generation_job(identity: str, target: Target = "notebook") -> GenerationJob:
+    get_run(identity, include_result=False)
+    try:
+        job = run_service().create_generation_job(identity, target)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    _notify_worker()
+    return job
+
+
+@app.get("/api/runs/{identity}/jobs", response_model=list[GenerationJob])
+def list_generation_jobs(identity: str) -> list[GenerationJob]:
+    try:
+        return run_service().generation_jobs(identity)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/api/runs/{identity}/workflows/{workflow_index}/candidates",
+    response_model=list[Candidate],
+)
+def workflow_candidates(
+    identity: str,
+    workflow_index: int,
+    target: Target = "notebook",
+) -> list[Candidate]:
+    try:
+        return run_service().workflow_candidates(identity, workflow_index, target)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/runs/{identity}/generate", response_model=list[Candidate])
+def generate_run(
+    identity: str,
+    target: Target = "notebook",
+    write_plan: bool = True,
+) -> list[Candidate]:
+    get_run(identity)
+    try:
+        return run_service().write_artifacts(identity, target, write_plan=write_plan).candidates
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/runs/{identity}/previews", response_model=list[Candidate])
+def preview_run(identity: str, target: Target = "notebook") -> list[Candidate]:
+    get_run(identity)
+    try:
+        return run_service().preview_candidates(identity, target)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post("/api/runs/{identity}/publications", response_model=PublicationReference)
+def publish_run(identity: str) -> PublicationReference:
+    get_run(identity)
+    try:
+        publication = run_service().publish_artifacts(identity)
+        return PublicationReference(run_id=publication.run_id, digest=publication.digest)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get("/api/runs/{identity}/publications/{digest}", response_model=PublicationReference)
+def verify_run_publication(identity: str, digest: str) -> PublicationReference:
+    get_run(identity)
+    try:
+        publication = run_service().verify_publication(identity, digest)
+        return PublicationReference(run_id=publication.run_id, digest=publication.digest)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get("/api/runs/{identity}/publications/{digest}/download")
+def download_run_publication(identity: str, digest: str) -> Response:
+    get_run(identity)
+    try:
+        content = run_service().publication_package(identity, digest)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return Response(
+        content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="publication-{digest}.zip"'},
+    )
+
+
+@app.post(
+    "/api/runs/{identity}/targets/{platform_id}/evaluate",
+    response_model=list[RunTargetEvaluation],
+)
+def evaluate_run_target(identity: str, platform_id: str) -> list[RunTargetEvaluation]:
+    get_run(identity, include_result=False)
+    try:
+        return run_service().evaluate_target(identity, platform_id, target_registry())
+    except UnknownTargetPlatformError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (UnsupportedTargetCapabilityError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post(
+    "/api/runs/{identity}/targets/{platform_id}/generate",
+    response_model=list[TargetGenerationResult],
+)
+def generate_run_target(
+    identity: str,
+    platform_id: str,
+    target_kind: str = Query(min_length=1),
+) -> list[TargetGenerationResult]:
+    get_run(identity, include_result=False)
+    try:
+        return run_service().generate_for_target(
+            identity, platform_id, target_kind, target_registry()
+        )
+    except UnknownTargetPlatformError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (UnsupportedTargetCapabilityError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get(
+    "/api/runs/{identity}/targets/{platform_id}/capacity",
+    response_model=list[TargetCapacityResult],
+)
+def estimate_run_target_capacity(
+    identity: str, platform_id: str
+) -> list[TargetCapacityResult]:
+    get_run(identity, include_result=False)
+    try:
+        return run_service().estimate_target_capacity(
+            identity, platform_id, target_registry()
+        )
+    except UnknownTargetPlatformError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (UnsupportedTargetCapabilityError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.post(
+    "/api/runs/{identity}/neutral-assessment",
+    response_model=NeutralEstateAssessmentResponse,
+)
+def assess_run_neutral(identity: str) -> NeutralEstateAssessmentResponse:
+    get_run(identity)
+    try:
+        return run_service().assess_neutral(identity)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@app.get(
+    "/api/runs/{identity}/neutral-assessment",
+    response_model=NeutralEstateAssessmentResponse,
+)
+def get_run_neutral_assessment(identity: str) -> NeutralEstateAssessmentResponse:
+    get_run(identity)
+    try:
+        return run_service().get_neutral_assessment(identity)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/api/runs/{identity}/targets/{platform_id}/evaluate",
+    response_model=list[RunTargetEvaluation],
+)
+def get_run_target_evaluation(identity: str, platform_id: str) -> list[RunTargetEvaluation]:
+    get_run(identity)
+    try:
+        return run_service().get_target_evaluations(identity, platform_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/api/runs/{identity}/export")
+def export_run(identity: str, format: Literal["json", "csv"] = "json") -> Response:
+    run = get_run(identity)
+    if run.result is None:
+        raise HTTPException(status_code=409, detail="Run has no assessment results")
+    # The files are fixed contracts, so the routing basis travels beside them as a header.
+    basis = {"X-Routing-Basis": run.routing_basis}
+    if format == "csv":
+        return Response(
+            run_service().export_csv(identity),
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="assessment.csv"', **basis},
+        )
+    return Response(
+        run.result.model_dump_json(indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="assessment.json"', **basis},
+    )
+
+
+@app.get("/api/runs/{identity}/offline-dashboard")
+def download_offline_dashboard(identity: str) -> Response:
+    run = get_run(identity)
+    if run.result is None or run.status != "completed":
+        raise HTTPException(
+            status_code=409,
+            detail="Complete an assessment before downloading the offline dashboard",
+        )
+    try:
+        content = build_offline_dashboard_package(
+            run,
+            run_service().get_capacity(identity),
+            assessment_csv=run_service().export_csv(identity),
+        )
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return Response(
+        content,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="portfolio-assessment-{run.id}.zip"',
+            "Cache-Control": "no-store",
+            "X-Routing-Basis": run.routing_basis,
+        },
+    )
+
+
+@app.post("/api/runs/{identity}/dry-run", response_model=DryRunResult)
+def deployment_preview(identity: str, selection: DevSelection) -> DryRunResult:
+    return dry_run(
+        preview_run(identity, selection.target),
+        approved_workspace=os.getenv("ACCELERATOR_DEV_WORKSPACE"),
+        requested_workspace=selection.workspace,
+    )
+
+
+def _dispatch_ci_deployment[ResultT: BaseModel](
+    identity: str,
+    selection: DeploymentSelectionBase,
+    dispatch_fn: Callable[
+        [DeploymentSelectionBase, str, str, PublicationDispatch | None], ResultT
+    ],
+) -> ResultT:
+    selected_target, artifact_path, publication = _plan_deployment_dispatch(
+        identity,
+        selection.source_workflow,
+        selection.target,
+        isolate_local_artifacts=selection.isolate_local_artifacts,
+        publication_digest=selection.publication_digest,
+    )
+    effective_selection = selection.model_copy(update={"target": selected_target})
+    workspace_id = Settings.from_environment().dev_workspace_id or ""
+    with bind_log_context(run_id=identity):
+        try:
+            return dispatch_fn(effective_selection, workspace_id, artifact_path, publication)
+        except DeploymentConfigurationError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        except DeploymentDispatchError as error:
+            raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@app.post(
+    "/api/runs/{identity}/deploy/github",
+    response_model=GitHubDeploymentResult,
+    status_code=202,
+)
+def deploy_with_github(
+    identity: str, selection: GitHubDeploymentSelection
+) -> GitHubDeploymentResult:
+    def _dispatch(
+        effective: DeploymentSelectionBase,
+        workspace_id: str,
+        artifact_path: str,
+        publication: PublicationDispatch | None,
+    ) -> GitHubDeploymentResult:
+        assert isinstance(effective, GitHubDeploymentSelection)
+        return GitHubDeploymentService.from_environment().deploy(
+            selection=effective,
+            workspace_id=workspace_id,
+            artifact_path=artifact_path,
+            publication=publication,
+        )
+
+    return _dispatch_ci_deployment(identity, selection, _dispatch)
+
+
+@app.post(
+    "/api/runs/{identity}/deploy/gitlab",
+    response_model=GitLabDeploymentResult,
+    status_code=202,
+)
+def deploy_with_gitlab(
+    identity: str,
+    selection: GitLabDeploymentSelection,
+) -> GitLabDeploymentResult:
+    def _dispatch(
+        effective: DeploymentSelectionBase,
+        workspace_id: str,
+        artifact_path: str,
+        publication: PublicationDispatch | None,
+    ) -> GitLabDeploymentResult:
+        assert isinstance(effective, GitLabDeploymentSelection)
+        return GitLabDeploymentService.from_environment().deploy(
+            selection=effective,
+            workspace_id=workspace_id,
+            artifact_path=artifact_path,
+            publication=publication,
+        )
+
+    return _dispatch_ci_deployment(identity, selection, _dispatch)
+
+
+def _plan_deployment_dispatch(
+    identity: str,
+    source_workflow: str,
+    requested_target: DeploymentTarget,
+    *,
+    isolate_local_artifacts: bool,
+    publication_digest: str | None,
+) -> tuple[DeploymentTarget, str, PublicationDispatch | None]:
+    return plan_deployment_dispatch(
+        run_service(),
+        identity,
+        source_workflow,
+        requested_target,
+        isolate_local_artifacts=isolate_local_artifacts,
+        publication_digest=publication_digest,
+    )
+
+
+def _resolve_deployment_artifact(
+    identity: str,
+    source_workflow: str,
+    requested_target: DeploymentTarget,
+    *,
+    isolate_local_artifacts: bool = False,
+) -> tuple[Candidate, DeploymentTarget, str]:
+    return resolve_deployment_artifact(
+        run_service(),
+        identity,
+        source_workflow,
+        requested_target,
+        isolate_local_artifacts=isolate_local_artifacts,
+    )
+
+
+@app.get("/api/runs/{identity}/candidates")
+def download_candidates(identity: str, target: Target = "notebook") -> Response:
+    get_run(identity)
+    try:
+        content = run_service().candidate_package(identity, target)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return Response(
+        content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{target}-previews.zip"'},
+    )
+
+
+@app.get("/api/runs/{identity}/bundle")
+def download_workflow_bundle(
+    identity: str,
+    workflow: Annotated[str, Query(min_length=1, max_length=4096)],
+) -> Response:
+    get_run(identity)
+    try:
+        content, filename = run_service().workflow_package(identity, workflow)
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return Response(
+        content,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get("/api/runs/{identity}/evidence", response_model=EvidenceResponse)
+def inspect_evidence(
+    identity: str,
+    response: Response,
+    workflow_index: int | None = None,
+) -> EvidenceResponse:
+    response.headers["Cache-Control"] = "no-store"
+    get_run(identity)
+    try:
+        return run_service().evidence(identity, workflow_index)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except (OSError, ValueError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+def resolve_web_root() -> Path:
+    """Resolve optional static web UI override or built-in Python UI directory."""
+    configured = os.getenv("ACCELERATOR_WEB_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+
+    packaged = Path(__file__).resolve().parents[1] / "web_dist"
+    if (packaged / "index.html").is_file():
+        return packaged
+
+    editable = Path(__file__).resolve().parents[3] / "apps" / "web" / "dist"
+    if (editable / "index.html").is_file():
+        return editable
+
+    cwd_dist = Path.cwd() / "apps" / "web" / "dist"
+    if (cwd_dist / "index.html").is_file():
+        return cwd_dist
+
+    return UI_STATIC_DIR.parent
+
+
+WEB_ROOT = resolve_web_root()
+_explicit_web_root = bool(os.getenv("ACCELERATOR_WEB_ROOT", "").strip())
+if _explicit_web_root and (WEB_ROOT / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=WEB_ROOT / "assets"), name="assets")
+elif UI_STATIC_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=UI_STATIC_DIR), name="assets")
+
+_ui_router = create_ui_router(
+    get_run_service=run_service,
+    notify_worker=_notify_worker,
+    get_target_registry=target_registry,
+    dispatch_github=deploy_with_github,
+    dispatch_gitlab=deploy_with_gitlab,
+)
+if _explicit_web_root and (WEB_ROOT / "index.html").is_file():
+
+    @app.get("/", response_class=HTMLResponse)
+    def analyst_app() -> HTMLResponse:
+        return HTMLResponse(
+            (WEB_ROOT / "index.html").read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-store"},
+        )
+
+app.include_router(_ui_router)

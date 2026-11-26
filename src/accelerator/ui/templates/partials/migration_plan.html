@@ -1,0 +1,232 @@
+<div class="page-header" data-page-nav="plan">
+  <div>
+    <h1>Evidence-Based Migration Plan</h1>
+    <p>Engine wave allocations and practical remaining person-day estimates support delivery sequencing (each workflow capped at 21 days).</p>
+  </div>
+  {% if run and run.status == 'completed' %}
+  <div class="btn-row">
+    <a class="btn btn-sm" href="/api/runs/{{ run.id }}/export?format=csv">Export Plan CSV</a>
+    <button type="button" class="btn btn-primary btn-sm"
+      hx-get="/ui/technical?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+      onclick="setActiveNav('technical')">
+      Technical Details →
+    </button>
+  </div>
+  {% endif %}
+</div>
+
+{% if not run or not run.result %}
+<div class="card"><div class="empty-inline">Select a completed assessment run to view the migration plan.</div></div>
+{% else %}
+<div class="stage-grid">
+  {% for wave in waves %}
+  <button type="button" class="stage-card {% if selected_wave == wave.value %}active{% endif %}"
+    hx-get="/ui/plan?run_id={{ run.id }}&wave={{ '' if selected_wave == wave.value else (wave.value | urlencode) }}"
+    hx-target="#stage" hx-swap="innerHTML">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <span class="badge badge-info">{{ wave.label }}</span>
+      <strong>{{ wave.count }} workflow(s)</strong>
+    </div>
+    <div style="font-size:12.5px;color:var(--muted);">{{ wave.guidance }}</div>
+    <div style="font-size:12px;margin-top:auto;">Effort: <strong>{{ wave.effort }} d</strong></div>
+  </button>
+  {% endfor %}
+</div>
+
+<div class="banner banner-info" style="font-size: 12.5px;">
+  <span>
+    <strong>Deterministic wave allocation:</strong>
+    Wave 1 = Low complexity, single compute target (with optional Pipeline wrapper) ·
+    Wave 2 = Medium complexity / Pilot ·
+    Wave 3 = High complexity or multi-compute (Dataflow + Notebook) ·
+    Wave 4 = Manual redesign (or 3+ unsupported types).
+    Click any wave card above to filter the backlog.
+  </span>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Remaining Effort Allocation</h2>
+    <p style="margin:0 0 12px;font-size:12.5px;color:var(--muted);">Practical person-days assigned per wave (total {{ total_effort }} d).</p>
+    <div class="bar-list">
+      {% for wave in waves %}
+      <div class="bar-row">
+        <div>{{ wave.label }}</div>
+        <div class="bar-track">
+          <div class="bar-fill info" style="width: {{ ((wave.effort / total_effort) * 100) | round(1) if total_effort else 0 }}%;"></div>
+        </div>
+        <strong>{{ wave.effort }} d ({{ wave.count }})</strong>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Fabric Target Distribution by Wave</h2>
+    <p style="margin:0 0 12px;font-size:12.5px;color:var(--muted);">Recommended primary Fabric targets grouped by wave.</p>
+    <div class="fact-grid">
+      {% for wave in waves %}
+      <div class="fact">
+        <span>{{ wave.label }} · {{ wave.count }} workflow(s)</span>
+        <strong style="font-size:12.5px;">{{ wave.target_summary or 'No workflows in wave' }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Delivery Capacity Sensitivity</h2>
+    <p style="color:var(--muted);margin-top:0;font-size:12.5px;">Illustrative duration; not a measured schedule or commitment.</p>
+    <div class="form-row">
+      <div class="field">
+        <label for="plan-team-size">Team Size: <strong id="plan-team-val">7 people</strong></label>
+        <input id="plan-team-size" type="range" min="1" max="15" value="7"
+          oninput="updateDeliverySensitivity({{ total_effort }})" />
+      </div>
+      <div class="field">
+        <label for="plan-allocation">Productive Allocation: <strong id="plan-alloc-val">77%</strong></label>
+        <input id="plan-allocation" type="range" min="40" max="100" value="77"
+          oninput="updateDeliverySensitivity({{ total_effort }})" />
+      </div>
+    </div>
+    <div class="fact-grid">
+      <div class="fact"><span>Effective Capacity</span><strong id="plan-fte-val">5.4 FTE</strong></div>
+      <div class="fact"><span>Indicative Duration</span><strong id="plan-weeks-val">{{ ((total_effort / 5.39) / 5) | round(1) if total_effort else 0 }} weeks</strong></div>
+      <div class="fact"><span>Total Effort Basis</span><strong>{{ total_effort }} days</strong></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Planning Basis &amp; Assumptions</h2>
+    <div class="focus-list">
+      <div class="focus-item">
+        <div><strong>Sequencing evidence</strong><span>Complexity band, recommended Fabric targets, macros, and dependency references.</span></div>
+      </div>
+      <div class="focus-item">
+        <div><strong>Not included automatically</strong><span>Business criticality, production runtime SLAs, schedules, and failure history.</span></div>
+      </div>
+      <div class="focus-item">
+        <div><strong>Pilot calibration required</strong><span>Update effort and velocity assumptions using accepted Wave 2 pilot outcomes.</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="gate-grid">
+  <div class="gate-card">
+    <h3>Wave 1 Exit Gate</h3>
+    <ul>
+      <li>Connections and identities tested</li>
+      <li>Shared components versioned</li>
+      <li>Source bindings reviewed</li>
+    </ul>
+  </div>
+  <div class="gate-card">
+    <h3>Wave 2 Exit Gate</h3>
+    <ul>
+      <li>Functional parity accepted</li>
+      <li>Effort recalibrated on pilot</li>
+      <li>Deployment &amp; monitoring proven</li>
+    </ul>
+  </div>
+  <div class="gate-card">
+    <h3>Wave 3 Exit Gate</h3>
+    <ul>
+      <li>Reusable patterns applied consistently</li>
+      <li>Fabric capacity &amp; support agreed</li>
+      <li>Mixed-target orchestration tested</li>
+    </ul>
+  </div>
+  <div class="gate-card">
+    <h3>Wave 4 Exit Gate</h3>
+    <ul>
+      <li>Redesign semantics validated</li>
+      <li>Representative performance tested</li>
+      <li>Rollback &amp; business owner sign-off</li>
+    </ul>
+  </div>
+</div>
+
+<div class="card">
+  <div class="page-header" style="margin-bottom:10px;">
+    <div>
+      <h2 style="margin:0;">Migration Backlog &amp; Sequencing Rationale ({{ workflows | length }})</h2>
+    </div>
+    {% if selected_wave or q or target or complexity %}
+    <button type="button" class="btn btn-sm"
+      hx-get="/ui/plan?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML">
+      Clear Filters
+    </button>
+    {% endif %}
+  </div>
+
+  <form class="form-row" hx-get="/ui/plan" hx-target="#stage" hx-swap="innerHTML">
+    <input type="hidden" name="run_id" value="{{ run.id }}" />
+    <div class="field">
+      <label for="plan-search">Search Workflow</label>
+      <input id="plan-search" name="q" type="search" value="{{ q }}" placeholder="Filter by workflow or rationale…" />
+    </div>
+    <div class="field" style="max-width: 160px;">
+      <label for="plan-wave">Wave</label>
+      <select id="plan-wave" name="wave">
+        <option value="">All waves</option>
+        {% for w in waves %}
+        <option value="{{ w.value }}" {% if w.value == selected_wave %}selected{% endif %}>{{ w.label }} ({{ w.count }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="max-width: 160px;">
+      <label for="plan-complexity">Complexity</label>
+      <select id="plan-complexity" name="complexity">
+        <option value="">All bands</option>
+        {% for b in complexity_options %}
+        <option value="{{ b }}" {% if b == complexity %}selected{% endif %}>{{ b }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field" style="max-width: 210px;">
+      <label for="plan-target">Fabric Target</label>
+      <select id="plan-target" name="target">
+        <option value="">All targets</option>
+        {% for t in target_options %}
+        <option value="{{ t }}" {% if t == target %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="btn btn-primary">Filter</button>
+  </form>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Workflow</th>
+          <th>Wave</th>
+          <th>Complexity</th>
+          <th>Recommended Target</th>
+          <th>Effort (d)</th>
+          <th>Rationale</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for idx, wf in workflows %}
+        <tr class="clickable"
+          hx-get="/ui/runs/{{ run.id }}/workflows/{{ idx }}/drawer?tab=summary"
+          hx-target="#drawer-host" hx-swap="innerHTML">
+          <td><strong>{{ wf.path }}</strong></td>
+          <td><span class="badge badge-info">{{ wf.migration_wave | wave_label }}</span></td>
+          <td>{{ wf.complexity_band }} ({{ wf.complexity_score }})</td>
+          <td>{{ wf.recommended_target }}</td>
+          <td>{{ wf.estimated_effort_days }}</td>
+          <td style="font-size:12px;color:var(--muted);">{{ wf.recommendation_reason }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6"><div class="empty-inline">No workflows match the selected filters.</div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}

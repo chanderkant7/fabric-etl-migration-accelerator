@@ -1,0 +1,41 @@
+<div class="card"
+  {% if run.status in ('queued', 'running') %}
+  hx-get="/ui/runs/{{ run.id }}/progress"
+  hx-trigger="every 1s"
+  hx-target="this"
+  hx-swap="outerHTML"
+  {% endif %}>
+  <div class="page-header" style="margin-bottom: 10px;">
+    <div>
+      <h2 style="margin: 0;">Assessment Run <code>{{ run.id[:12] }}</code></h2>
+      <p style="margin: 2px 0 0; color: var(--muted);">
+        Status: <strong>{{ run.status }}</strong> · Processed {{ run.processed }} of {{ run.total }} workflow(s) · Cache hits: {{ run.cache_hits }}
+      </p>
+    </div>
+    <div class="btn-row">
+      {% if run.status in ('queued', 'running') %}
+      <button type="button" class="btn btn-sm"
+        hx-post="/ui/runs/{{ run.id }}/cancel" hx-target="#stage" hx-swap="innerHTML">
+        Cancel Run
+      </button>
+      {% elif run.status == 'completed' %}
+      <button type="button" class="btn btn-primary"
+        hx-get="/ui/portfolio?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+        onclick="setActiveNav('portfolio')">
+        View Portfolio Results
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  {% set pct = ((run.processed / run.total) * 100) | round(0) | int if run.total else 0 %}
+  <div class="progress-bar">
+    <div class="progress-fill" style="width: {{ pct }}%;"></div>
+  </div>
+
+  {% if run.error %}
+  <div class="banner banner-err" style="margin-top: 12px;">
+    <span>{{ run.error }}</span>
+  </div>
+  {% endif %}
+</div>

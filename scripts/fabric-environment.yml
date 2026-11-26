@@ -1,0 +1,4 @@
+dependencies:
+  - pip:
+      - defusedxml>=0.7.1,<1
+      - pydantic>=2.12,<3

@@ -1,0 +1,16 @@
+{% if error %}
+<div class="banner banner-err"><span>{{ error }}</span></div>
+{% else %}
+<div class="card">
+  <div class="page-header" style="margin-bottom: 8px;">
+    <h3 style="margin: 0;">{{ title }}</h3>
+    <span class="badge {% if ok %}badge-ok{% else %}badge-warn{% endif %}">{{ status }}</span>
+  </div>
+  {% if message %}
+  <p style="margin: 0 0 8px;">{{ message }}</p>
+  {% endif %}
+  {% if details %}
+  <pre class="code-block">{{ details }}</pre>
+  {% endif %}
+</div>
+{% endif %}

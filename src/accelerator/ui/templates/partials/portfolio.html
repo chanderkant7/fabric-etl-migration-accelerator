@@ -1,0 +1,301 @@
+{% if oob_runs is defined %}
+<select id="active-run-select" class="run-select" name="run_id" hx-swap-oob="true"
+  hx-get="/ui/portfolio" hx-target="#stage" hx-swap="innerHTML" hx-trigger="change"
+  onchange="setActiveNav('portfolio')">
+  <option value="">— Select completed run —</option>
+  {% for r in oob_runs %}
+  <option value="{{ r.id }}" {% if run and r.id == run.id %}selected{% endif %}>
+    {{ r.id[:8] }} · {{ r.status }} ({{ r.processed }}/{{ r.total }})
+  </option>
+  {% endfor %}
+</select>
+{% endif %}
+
+<div class="page-header" data-page-nav="portfolio">
+  <div>
+    <h1>Portfolio Overview</h1>
+    {% if run %}
+    <p>Run <code>{{ run.id[:12] }}</code> · Portfolio readiness, delivery sequencing, material risks, and leadership decisions</p>
+    {% else %}
+    <p>Select or start an assessment run to view estate readiness.</p>
+    {% endif %}
+  </div>
+  {% if run and run.status == 'completed' %}
+  <div class="btn-row">
+    <a class="btn btn-sm" href="/api/runs/{{ run.id }}/export?format=json">Export JSON</a>
+    <a class="btn btn-sm" href="/api/runs/{{ run.id }}/export?format=csv">Export CSV</a>
+    <a class="btn btn-sm" href="/api/runs/{{ run.id }}/offline-dashboard">Download Offline Dashboard</a>
+    <button type="button" class="btn btn-primary btn-sm"
+      hx-get="/ui/deployment?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+      onclick="setActiveNav('deployment')">
+      Open Fabric Deployment
+    </button>
+  </div>
+  {% endif %}
+</div>
+
+{% if not run %}
+<div class="card">
+  <div class="empty-inline">
+    No assessment run selected.
+    <div style="margin-top: 10px;">
+      <button type="button" class="btn btn-primary"
+        hx-get="/ui/intake" hx-target="#stage" hx-swap="innerHTML"
+        onclick="setActiveNav('intake')">
+        Start New Assessment
+      </button>
+    </div>
+  </div>
+</div>
+{% elif run.status in ('queued', 'running') %}
+  {% include "partials/run_progress.html" %}
+{% elif not run.result %}
+<div class="banner banner-err">
+  <span>Run <code>{{ run.id[:12] }}</code> ended with status <strong>{{ run.status }}</strong>{% if run.error %}: {{ run.error }}{% endif %}.</span>
+</div>
+{% else %}
+{% if run.routing_basis != 'compiler_confirmed' %}
+<div class="banner banner-info">
+  <div>
+    <strong>Routing basis: static mapping</strong>
+    — Static assessment never runs compilers. Open <strong>Fabric Deployment</strong> to confirm routes with the Fabric compilers.
+  </div>
+  <button type="button" class="btn btn-sm"
+    hx-get="/ui/deployment?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+    onclick="setActiveNav('deployment')">
+    Confirm Fabric Fit
+  </button>
+</div>
+{% endif %}
+
+<div class="card" style="border-left: 4px solid var(--accent);">
+  <div class="page-header" style="margin-bottom: 6px;">
+    <h2 style="margin: 0;">Leadership Recommendation</h2>
+    <span class="badge {% if summary.manual_rework or summary.high_complexity %}badge-warn{% else %}badge-ok{% endif %}">
+      {{ 'Conditional proceed' if (summary.manual_rework or summary.high_complexity) else 'Proceed' }}
+    </span>
+  </div>
+  <p style="margin: 0; color: var(--muted);">
+    Proceed conditionally with <strong>{{ summary.native_ready }}</strong> native-ready workflow(s).
+    Resolve <strong>{{ summary.manual_rework }}</strong> manual-rework item(s) and <strong>{{ summary.manual_count }}</strong> workflow(s) with unsupported tools, assign business ownership, and calibrate effort through initial migration waves before scaling.
+  </p>
+</div>
+
+<div class="kpi-grid">
+  <div class="kpi">
+    <div class="kpi-label">Portfolio Scope</div>
+    <div class="kpi-value">{{ summary.total }}</div>
+    <div class="kpi-sub">{{ run.result.failed_count }} parse failure(s) · {{ summary.total_tools }} tools · {{ summary.total_connections }} links</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Native-Ready</div>
+    <div class="kpi-value">{{ summary.native_ready }}</div>
+    <div class="kpi-sub">Dataflow, Notebook, or Pipeline route</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Manual Rework / Findings</div>
+    <div class="kpi-value">{{ summary.manual_count }}</div>
+    <div class="kpi-sub">{{ summary.manual_rework }} full manual · {{ summary.total_findings }} findings</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Estimated Remaining Effort</div>
+    <div class="kpi-value">{{ summary.total_effort }} d</div>
+    <div class="kpi-sub">Avg complexity {{ summary.avg_complexity }} · max 21 d/wf</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">Projected F-SKU</div>
+    <div class="kpi-value">{{ summary.projected_sku }}</div>
+    <div class="kpi-sub">
+      {{ summary.capacity_context }}
+      <div>
+        <button type="button" class="btn btn-sm" style="margin-top:6px;"
+          hx-get="/ui/capacity?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+          onclick="setActiveNav('capacity')">
+          Capacity Planning →
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Decision Brief</h2>
+    <div class="fact-grid">
+      <div class="fact"><span>Decision requested</span><strong>Approve conditional mobilization</strong></div>
+      <div class="fact"><span>Funding boundary</span><strong>Wave 1 prerequisites &amp; controlled pilot</strong></div>
+      <div class="fact"><span>Conditions</span><strong>Owners, parity thresholds, capacity &amp; ROI</strong></div>
+      <div class="fact"><span>Next approval gate</span><strong>Pilot exit review before scale-out</strong></div>
+    </div>
+    <div style="margin-top: 12px;">
+      <button type="button" class="btn btn-sm"
+        hx-get="/ui/plan?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+        onclick="setActiveNav('plan')">
+        Review Migration Plan &amp; Exit Gates →
+      </button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Leadership Scorecard</h2>
+    <div class="focus-list">
+      <div class="focus-item">
+        <div><strong>Technology readiness</strong><span>{{ summary.native_ready }} of {{ summary.total }} workflows have a native route.</span></div>
+        <span class="badge badge-warn">Amber</span>
+      </div>
+      <div class="focus-item">
+        <div><strong>Business ownership</strong><span>Owner, criticality, and SLA evidence were not supplied.</span></div>
+        <span class="badge badge-err">Red</span>
+      </div>
+      <div class="focus-item">
+        <div><strong>Business case &amp; capacity</strong><span>{% if capacity %}Preliminary capacity exists ({{ summary.projected_sku }}); cost &amp; pilot validation remain open.{% else %}Cost, capacity, and benefit evidence are missing.{% endif %}</span></div>
+        <span class="badge {% if capacity %}badge-warn{% else %}badge-err{% endif %}">{{ 'Amber' if capacity else 'Red' }}</span>
+      </div>
+      <div class="focus-item">
+        <div><strong>Delivery governance</strong><span>Wave gates exist; accountable owners remain unassigned.</span></div>
+        <span class="badge badge-warn">Amber</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Technical Complexity</h2>
+    <p style="color:var(--muted);margin-top:0;font-size:12.5px;">Static complexity grouping; does not represent business priority.</p>
+    <div class="bar-list">
+      {% for band, count, color in summary.complexity_bars %}
+      <div class="bar-row">
+        <div>{{ band }}</div>
+        <div class="bar-track"><div class="bar-fill {{ color }}" style="width: {{ ((count / summary.total) * 100) | round(1) if summary.total else 0 }}%;"></div></div>
+        <strong>{{ count }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Recommended Primary Fabric Targets</h2>
+    <p style="color:var(--muted);margin-top:0;font-size:12.5px;">Primary implementation technology recommended per workflow.</p>
+    <div class="bar-list">
+      {% for target, count in summary.by_target %}
+      <div class="bar-row">
+        <div>{{ target }}</div>
+        <div class="bar-track"><div class="bar-fill info" style="width: {{ ((count / summary.total) * 100) | round(1) if summary.total else 0 }}%;"></div></div>
+        <strong>{{ count }}</strong>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <h2>Immediate Migration Priorities &amp; Escalations</h2>
+    <div class="focus-list">
+      {% if summary.top_workflow %}
+      <div class="focus-item">
+        <div>
+          <strong>Highest complexity: {{ summary.top_workflow[1].path }}</strong>
+          <span>Complexity {{ summary.top_workflow[1].complexity_score }} ({{ summary.top_workflow[1].complexity_band }}) · {{ summary.top_workflow[1].recommended_target }}</span>
+        </div>
+        <button type="button" class="btn btn-sm"
+          hx-get="/ui/runs/{{ run.id }}/workflows/{{ summary.top_workflow[0] }}/drawer?tab=summary"
+          hx-target="#drawer-host" hx-swap="innerHTML">
+          Inspect
+        </button>
+      </div>
+      {% endif %}
+      <div class="focus-item">
+        <div><strong>{{ summary.manual_count }} workflow(s) with manual tools</strong><span>Explicit redesign or scaffold disposition required.</span></div>
+        <button type="button" class="btn btn-sm"
+          hx-get="/ui/workflows?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+          onclick="setActiveNav('workflows')">
+          Review
+        </button>
+      </div>
+      <div class="focus-item">
+        <div><strong>{{ summary.total_dependencies }} dependencies · {{ summary.total_endpoints }} endpoints</strong><span>Validate shared connections, macros, and schemas.</span></div>
+        <button type="button" class="btn btn-sm"
+          hx-get="/ui/technical?run_id={{ run.id }}&register=findings" hx-target="#stage" hx-swap="innerHTML"
+          onclick="setActiveNav('technical')">
+          Evidence
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Migration Wave Summary</h2>
+    <table>
+      <thead>
+        <tr><th>Wave</th><th>Workflows</th><th>Effort (days)</th></tr>
+      </thead>
+      <tbody>
+        {% for wave, count, effort in summary.by_wave %}
+        <tr>
+          <td><span class="badge badge-info">{{ wave }}</span></td>
+          <td>{{ count }}</td>
+          <td>{{ effort }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div style="margin-top: 12px;">
+      <button type="button" class="btn btn-sm"
+        hx-get="/ui/plan?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+        onclick="setActiveNav('plan')">
+        Open Full Migration Plan →
+      </button>
+    </div>
+  </div>
+</div>
+
+{% if capacity %}
+<div class="card">
+  <div class="page-header" style="margin-bottom: 10px;">
+    <div>
+      <h2 style="margin: 0;">Fabric Capacity Summary</h2>
+      <p style="margin: 2px 0 0; color: var(--muted); font-size: 12.5px;">
+        {{ 'Preliminary sizing from confirmed inputs.' if capacity.status == 'planning_estimate' else 'Initial estimate using defaults (Daily, 1,000 rows). Edit per-workflow inputs in Capacity Sizing.' }}
+      </p>
+    </div>
+    <button type="button" class="btn btn-sm"
+      hx-get="/ui/capacity?run_id={{ run.id }}" hx-target="#stage" hx-swap="innerHTML"
+      onclick="setActiveNav('capacity')">
+      Edit Capacity Inputs →
+    </button>
+  </div>
+  <div class="fact-grid">
+    {% for sc in capacity.scenarios %}
+    <div class="fact"><span>{{ sc.name }} Scenario</span><strong>{{ sc.recommended_sku }} ({{ sc.required_cu | round(2) }} CU)</strong></div>
+    {% endfor %}
+    <div class="fact"><span>Monthly Demand</span><strong>{{ capacity.monthly_cu_hours | round(1) }} CU-h/mo</strong></div>
+    <div class="fact"><span>Coverage</span><strong>{{ capacity.coverage_percent | round(0) | int }}% ({{ capacity.modeled_count }}/{{ capacity.eligible_count }})</strong></div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Assessment Confidence &amp; Evidence Gaps</h3>
+  <p style="margin: 0; color: var(--muted); font-size: 12.5px;">
+    Recommendations use static workflow evidence and do not infer business or operational risk.
+  </p>
+  <ul style="margin: 10px 0 0; color: var(--muted); font-size: 12.5px;">
+    <li>Business evidence not included: criticality, ownership, operating cost, and licensing savings.</li>
+    <li>Operational evidence not included: schedules, row volumes, runtime history, and production SLAs.</li>
+    <li>Confirm inputs in <strong>Capacity Sizing</strong> and validate representative pilot workloads before cutover.</li>
+  </ul>
+</div>
+
+{% if run.result.failures %}
+<div class="card">
+  <h2>Parse Failures ({{ run.result.failures | length }})</h2>
+  <ul style="color: var(--err-fg); font-size: 13px;">
+    {% for f in run.result.failures %}
+    <li><code>{{ f }}</code></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endif %}

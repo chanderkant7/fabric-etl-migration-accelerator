@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Accelerator: Serve Local UI & API",
+      "type": "shell",
+      "command": "conda run --no-capture-output -n fabric-etl-migration-accelerator tool serve",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Accelerator: Run Python Tests",
+      "type": "shell",
+      "command": "conda run --no-capture-output -n fabric-etl-migration-accelerator python -m pytest --cov-fail-under=80",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

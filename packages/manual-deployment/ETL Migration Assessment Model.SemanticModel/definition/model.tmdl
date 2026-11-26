@@ -1,0 +1,20 @@
+model Model
+	culture: en-US
+	defaultPowerBIDataSourceVersion: powerBI_V3
+	sourceQueryCulture: en-US
+	discourageImplicitMeasures
+
+expression 'DirectLake - ETL Migration Assessment Model' =
+	let
+		Source = AzureStorage.DataLake("https://onelake.dfs.fabric.microsoft.com/aaf5db14-9635-4454-9584-f10ec8494483/974dfe68-8801-4d3c-bbb7-69f78e0b8d0a", [HierarchicalNavigation=true])
+	in
+		Source
+
+ref table AssessmentRun
+ref table WorkflowAssessment
+ref table ToolInventory
+ref table Finding
+ref table Dependency
+ref table WorkflowNode
+ref table WorkflowConnection
+ref table CapacityProfile

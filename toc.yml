@@ -1,0 +1,72 @@
+- name: Overview
+  href: index.md
+- name: Repository Overview
+  href: README.md
+- name: Start Here
+  items:
+    - name: Getting Started
+      href: docs/Guides/getting-started.md
+    - name: User Guide
+      href: docs/Guides/user-guide.md
+    - name: Installation and Runtime Modes
+      href: docs/Guides/installation.md
+    - name: Fabric Capacity Planning
+      href: docs/Guides/capacity-planning.md
+    - name: Troubleshooting
+      href: docs/Guides/troubleshooting.md
+- name: Business and Requirements
+  items:
+    - name: Business Requirements Document
+      href: docs/brds/fabric-etl-migration-accelerator-brd.md
+    - name: Pluggable Architecture Business Requirements
+      href: docs/Planning/pluggable-architecture-business-requirements.md
+    - name: Accelerator Implementation Plan
+      href: docs/Planning/accelerator-implementation-plan.md
+    - name: Pluggable Architecture Analysis
+      href: docs/Planning/pluggable-architecture-analysis-and-approach.md
+    - name: ETL Modernization Foundation Implementation Plan
+      href: docs/Planning/modernization-foundation-implementation-plan.md
+    - name: Pluggable Architecture Implementation Plan
+      href: docs/Planning/pluggable-architecture-implementation-plan.md
+- name: Architecture and Extensions
+  items:
+    - name: System Architecture
+      href: docs/Architecture/system-architecture.md
+    - name: ADR-001 Source Adapters and Canonical ETL IR
+      href: docs/Architecture/ADR-001-etl-source-adapters.md
+    - name: Local Architecture Decisions
+      href: docs/Planning/local-architecture-decisions.md
+    - name: Building Source and Target Plugins
+      href: docs/Guides/building-plugins.md
+    - name: PyPI Packages and Publishing
+      href: docs/Guides/pypi-packages.md
+- name: Delivery and Operations
+  items:
+    - name: Fabric CI/CD Setup
+      href: docs/Guides/fabric-ci-cd-setup.md
+    - name: Deployment Strategy
+      href: docs/Release/deployment-strategy.md
+    - name: Rollback Plan
+      href: docs/Release/rollback-plan.md
+    - name: Release Notes
+      href: docs/Release/release-notes.md
+- name: Security and Quality
+  items:
+    - name: Threat Model
+      href: docs/Security/threat-model.md
+    - name: Security Policy
+      href: SECURITY.md
+    - name: Security Scan Results
+      href: docs/Quality/security-scan-results.md
+    - name: Audit Findings Disposition
+      href: docs/Quality/audit-findings-log.md
+    - name: Prototype UI Review
+      href: docs/Quality/prototype-ui-review.md
+- name: Contribute and Support
+  items:
+    - name: Developer Contribution Guide
+      href: docs/Guides/developer-contribution-guide.md
+    - name: Support
+      href: SUPPORT.md
+    - name: Third-Party OSS Notice
+      href: NOTICE.md
